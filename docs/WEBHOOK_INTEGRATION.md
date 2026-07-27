@@ -1733,6 +1733,7 @@ If you're hitting rate limits:
 
 ## Additional Resources
 
+- [Event Schema Catalog](./EVENT_SCHEMA_CATALOG.md) — schemas for the off-chain webhook delivery envelope, payloads, and admin API
 - [Stellar Soroban Documentation](https://developers.stellar.org/docs/learn/soroban)
 - [Stellar RPC API Reference](https://developers.stellar.org/docs/reference/rpc)
 - [YieldVault Contract Architecture](./CONTRACTS_ARCHITECTURE.md)

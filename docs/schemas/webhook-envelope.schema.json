@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/YieldVault-RWA/schemas/webhook-envelope.schema.json",
+  "title": "YieldVault Webhook Envelope",
+  "description": "The outbound envelope YieldVault sends for every webhook delivery. Source of truth: backend/src/webhookDelivery.ts (WebhookEnvelope).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventType", "sentAt", "payload"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing integer identifying the envelope shape. Consumers should gate feature detection on this field, not on the payload contents. Current value: 1."
+    },
+    "eventType": {
+      "$ref": "./transaction-event-type.schema.json"
+    },
+    "sentAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this delivery attempt was dispatched."
+    },
+    "payload": {
+      "$ref": "./transaction-event-payload.schema.json"
+    }
+  }
+}

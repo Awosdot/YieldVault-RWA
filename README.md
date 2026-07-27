@@ -117,7 +117,7 @@ deterministic cursor paging examples.
 
 YieldVault emits cryptographically-signed events for all critical vault operations. Off-chain services can consume these events to track deposits, withdrawals, fee changes, and other protocol activity.
 
-For a complete guide on consuming YieldVault events, see **[Webhook Integration Guide](./docs/WEBHOOK_INTEGRATION.md)**.
+For a complete guide on consuming YieldVault events, see **[Webhook Integration Guide](./docs/WEBHOOK_INTEGRATION.md)**. For the formal envelope/payload schemas webhook consumers validate against, see the **[Event Schema Catalog](./docs/EVENT_SCHEMA_CATALOG.md)**.
 
 ### Quick Start
 

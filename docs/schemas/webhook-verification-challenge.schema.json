@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/YieldVault-RWA/schemas/webhook-verification-challenge.schema.json",
+  "title": "YieldVault Webhook Verification Challenge",
+  "description": "Body of the one-time challenge request YieldVault POSTs to a newly registered endpoint (and the shape the consumer must echo back) before any real events are delivered. Source of truth: probeWebhookVerification in backend/src/webhookDelivery.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "challenge"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "webhook.verification"
+    },
+    "challenge": {
+      "type": "string",
+      "description": "Opaque random token. Also sent in the X-YieldVault-Challenge request header. The consumer must return the same value, either in the X-YieldVault-Challenge response header or as { \"challenge\": \"<token>\" } in the response body, for the endpoint to move to verificationStatus: \"verified\"."
+    }
+  }
+}
