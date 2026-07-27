@@ -17,6 +17,10 @@
 
 This document outlines the contract for YieldVault-RWA webhook payloads and the evolution rules that govern how the schema changes over time. These rules ensure that webhook consumers can reliably process events without unexpected breaks, even as the protocol evolves.
 
+> For the current, implemented envelope/payload shapes and downloadable JSON Schema files, see the
+> [Event Schema Catalog](./EVENT_SCHEMA_CATALOG.md). This document covers the *policy* for how
+> those schemas are allowed to change going forward.
+
 ### Goals
 
 - **Predictability**: Consumers should know what to expect when processing webhook events
@@ -34,19 +38,25 @@ Every webhook payload is wrapped in a standardized envelope:
 
 ```json
 {
+  "schemaVersion": 1,
   "eventType": "transaction.deposit.created",
   "sentAt": "2026-06-26T10:30:00.000Z",
-  "payload": { ... },
-  "version": "1.0"
+  "payload": { ... }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `schemaVersion` | `integer` | Monotonically increasing envelope schema version. Currently `1`. See [Versioning Strategy](#versioning-strategy) below for how this evolves. |
 | `eventType` | `string` | The type of event (see Event Types below) |
 | `sentAt` | `ISO 8601` | Timestamp when the event was dispatched |
 | `payload` | `object` | Event-specific data payload |
-| `version` | `string` | Schema version (semver format) |
+
+> **Current implementation note**: `schemaVersion` is a plain integer counter today, not the
+> SemVer string described in the [Versioning Strategy](#versioning-strategy) section below. That
+> section documents the target policy this field is expected to graduate to as the schema evolves
+> past its initial version. See the [Event Schema Catalog](./EVENT_SCHEMA_CATALOG.md) for the
+> exact, currently-implemented shape.
 
 ### Event Types
 
@@ -435,6 +445,7 @@ function canUseFeature(payload: any, feature: string): boolean {
 
 ## Additional Resources
 
+- [Event Schema Catalog](./EVENT_SCHEMA_CATALOG.md) — current envelope/payload shapes and JSON Schema files
 - [Webhook Integration Guide](./WEBHOOK_INTEGRATION.md)
 - [Webhook Signature Verification](./backend/docs/WEBHOOK_SIGNATURES.md)
 - [Contract Upgrade Playbook](./runbooks/CONTRACT_UPGRADE_PLAYBOOK.md)

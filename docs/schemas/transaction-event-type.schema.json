@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/YieldVault-RWA/schemas/transaction-event-type.schema.json",
+  "title": "YieldVault Webhook Event Type",
+  "description": "Enum of event types a registered webhook endpoint may receive. Source of truth: WEBHOOK_EVENT_TYPES in backend/src/middleware/validate.ts, re-exported as TransactionEventType in backend/src/webhookDelivery.ts.",
+  "type": "string",
+  "enum": ["transaction.deposit.created", "transaction.withdrawal.created"]
+}

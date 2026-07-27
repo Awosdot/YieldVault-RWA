@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/YieldVault-RWA/schemas/transaction-event-payload.schema.json",
+  "title": "YieldVault Transaction Event Payload",
+  "description": "The `payload` object carried by every transaction.* webhook envelope. Shape is identical for transaction.deposit.created and transaction.withdrawal.created. Source of truth: TransactionEventPayload in backend/src/webhookDelivery.ts.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "transactionId",
+    "amount",
+    "asset",
+    "walletAddress",
+    "transactionHash",
+    "status",
+    "timestamp"
+  ],
+  "properties": {
+    "transactionId": {
+      "type": "string",
+      "description": "Unique identifier for the transaction record."
+    },
+    "amount": {
+      "type": "string",
+      "description": "Amount in the asset's smallest unit (stroops for USDC, 10^6 = 1 USDC), encoded as a decimal string to avoid precision loss for large values."
+    },
+    "asset": {
+      "type": "string",
+      "description": "Asset code, e.g. \"USDC\"."
+    },
+    "walletAddress": {
+      "type": "string",
+      "description": "Stellar account address (StrKey \"G...\") of the depositor/withdrawer."
+    },
+    "transactionHash": {
+      "type": "string",
+      "description": "Hash of the on-chain Stellar transaction that triggered this event."
+    },
+    "status": {
+      "type": "string",
+      "description": "Current status of the transaction (e.g. \"pending\", \"completed\")."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the transaction was recorded."
+    }
+  }
+}

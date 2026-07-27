@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/YieldVault-RWA/schemas/webhook-dead-letter-record.schema.json",
+  "title": "YieldVault Webhook Dead-Letter Record",
+  "description": "Shape of entries returned by GET /admin/webhooks/dead-letters after a delivery exhausts all retry attempts. Source of truth: WebhookDeadLetterRecord in backend/src/webhookDelivery.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "endpointId",
+    "endpointUrl",
+    "eventType",
+    "payload",
+    "attempts",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "endpointId": { "type": "string" },
+    "endpointUrl": { "type": "string" },
+    "eventType": { "$ref": "./transaction-event-type.schema.json" },
+    "payload": { "$ref": "./transaction-event-payload.schema.json" },
+    "attempts": { "type": "integer", "minimum": 1 },
+    "lastError": { "type": "string" },
+    "originalDeliveryId": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["dead-letter", "requeued", "delivered"]
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "retriedAt": { "type": "string", "format": "date-time" }
+  }
+}
