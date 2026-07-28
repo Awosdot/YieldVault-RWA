@@ -208,3 +208,22 @@ Responsibilities:
 # Notes
 
 The dashboard centralizes transaction management while delegating visualization, validation, and feedback to dedicated child components. This separation keeps business logic isolated from reusable UI components and improves maintainability.
+
+---
+
+# Vault Comparison Screen
+
+Route: `/compare` (lazy-loaded, `frontend/src/pages/VaultComparison.tsx`).
+
+Lets a user select two or three vault strategies and view them side by side before allocating capital. Reachable from the "Compare" navbar link and from the vault dashboard's comparison CTA (`frontend/src/components/VaultDashboard.tsx`).
+
+Responsibilities:
+
+- Strategy selection with a configurable maximum (currently 3)
+- Empty state guidance when fewer than two strategies are selected
+- Side-by-side table comparing APY, liquidity, lockup, risk, and settlement across the selected strategies
+
+Test coverage:
+
+- Unit: `frontend/src/pages/VaultComparison.test.tsx`
+- E2E: `frontend/e2e/vault-comparison.spec.ts`
