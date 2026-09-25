@@ -76,7 +76,7 @@ describe('OpenAPI contract: GET /health', () => {
 
   it('checks object contains all required dependency keys', async () => {
     const res = await request(app).get('/health');
-    const requiredKeys = ['api', 'cache', 'stellarRpc', 'databasePrimary', 'databaseReplica', 'prisma', 'jobs'];
+    const requiredKeys = ['api', 'cache', 'stellarRpc', 'databasePrimary', 'databaseReplica', 'prisma', 'jobs', 'indexer'];
     for (const key of requiredKeys) {
       expect(res.body.checks).toHaveProperty(key);
       expect(['up', 'down', 'degraded', 'unknown']).toContain(res.body.checks[key]);

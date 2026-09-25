@@ -61,6 +61,7 @@ describe('#711 API contract schema snapshots', () => {
         databaseReplica: 'up',
         prisma: 'up',
         jobs: 'up',
+        indexer: 'up',
       },
       sorobanCircuitBreaker: {
         state: 'closed',
@@ -135,5 +136,22 @@ describe('#711 API contract schema snapshots', () => {
       const second = generateSnapshotFor(endpoint);
       expect(first).toEqual(second);
     }
+  });
+
+  it('detects orphaned required references in baseline snapshot', () => {
+    const baseline = JSON.parse(JSON.stringify(zodToJsonShape(HealthResponseSchema))) as JsonSchemaShape;
+    delete baseline.properties?.checks.properties?.api;
+    const current = zodToJsonShape(HealthResponseSchema);
+    const issues = diffSchemaShapes(baseline, current, 'GET /health');
+    expect(issues.some((issue) => issue.message === 'required field missing from snapshot properties (orphaned reference)' && issue.path === 'GET /health.checks.api')).toBe(true);
+  });
+
+  it('detects new fields added to live schema', () => {
+    const baseline = zodToJsonShape(HealthResponseSchema);
+    const current = JSON.parse(JSON.stringify(baseline)) as JsonSchemaShape;
+    if (!current.properties) current.properties = {};
+    current.properties.newField = { type: 'string' };
+    const issues = diffSchemaShapes(baseline, current, 'GET /health');
+    expect(issues.some((issue) => issue.message === 'new field added to live schema (snapshot drift)' && issue.path === 'GET /health.newField')).toBe(true);
   });
 });
