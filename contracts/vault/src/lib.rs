@@ -1381,19 +1381,12 @@ impl YieldVault {
                         .storage()
                         .instance()
                         .get(&DataKeyExt::Risk(RiskExtKey::LastPx));
-                    let last_price = Self::last_oracle_price(&env);
                     oracle::OracleValidator::validate_price_data(
                         &env,
                         &price_data,
                         max_age,
                         Some(oracle::MAX_PRICE_DEVIATION_BPS),
                         last.as_ref(),
-                    )
-                    .expect("OracleValidationFailed");
-                    env.storage()
-                        .instance()
-                        .set(&DataKeyExt::Risk(RiskExtKey::LastPx), &price_data);
-                        last_price.as_ref(),
                     )
                     .map_err(|_| VaultError::OracleValidationFailed)?;
                     Self::set_last_oracle_price(&env, &price_data);
@@ -1573,9 +1566,7 @@ impl YieldVault {
         let mut perf_fee_amount: i128 = 0;
         if perf_enabled && harvested > 0 {
             let current_watermark = Self::strategy_watermark(env.clone(), strategy.clone());
-            let yield_above_hwm = harvested
-                .checked_sub(current_watermark)
-                .unwrap_or(0);
+            let yield_above_hwm = harvested.checked_sub(current_watermark).unwrap_or(0);
             if yield_above_hwm > 0 {
                 let perf_fee_bps: i128 = env
                     .storage()
@@ -1604,18 +1595,20 @@ impl YieldVault {
             }
         }
 
-        let net_harvested = harvested
-            .checked_sub(perf_fee_amount)
-            .unwrap_or(0);
+        let net_harvested = harvested.checked_sub(perf_fee_amount).unwrap_or(0);
 
         let mut state = Self::get_state(&env);
         let pre_total_assets = state.total_assets;
-        let new_total_assets = pre_total_assets.checked_add(net_harvested).expect("overflow");
+        let new_total_assets = pre_total_assets
+            .checked_add(net_harvested)
+            .expect("overflow");
         state.total_assets = new_total_assets;
         env.storage().instance().set(&DataKey::State, &state);
 
-        env.events()
-            .publish((symbol_short!("k_yield"),), (net_harvested, new_total_assets));
+        env.events().publish(
+            (symbol_short!("k_yield"),),
+            (net_harvested, new_total_assets),
+        );
 
         Ok(harvested)
     }
@@ -1864,7 +1857,10 @@ impl YieldVault {
             .instance()
             .get(&DataKey::DaoThreshold)
             .unwrap_or(1);
-        let total_votes = proposal.yes_votes.checked_add(proposal.no_votes).expect("overflow");
+        let total_votes = proposal
+            .yes_votes
+            .checked_add(proposal.no_votes)
+            .expect("overflow");
         if total_votes < threshold {
             return Err(VaultError::QuorumNotReached);
         }
@@ -3574,8 +3570,7 @@ impl YieldVault {
         env.storage()
             .instance()
             .set(&DataKeyExt::PerformanceFeeBps, &bps);
-        env.events()
-            .publish((symbol_short!("pperfchg"),), (bps,));
+        env.events().publish((symbol_short!("pperfchg"),), (bps,));
         Ok(())
     }
 
@@ -3593,17 +3588,13 @@ impl YieldVault {
     /// fees are transferred to this address on each yield report.
     ///
     /// Only the Admin can call this.
-    pub fn set_performance_incentive_pool(
-        env: Env,
-        pool: Address,
-    ) -> Result<(), VaultError> {
+    pub fn set_performance_incentive_pool(env: Env, pool: Address) -> Result<(), VaultError> {
         let admin: Address = get_admin(&env).expect("Admin not set");
         admin.require_auth();
         env.storage()
             .instance()
             .set(&DataKeyExt::PerformanceIncentivePool, &pool);
-        env.events()
-            .publish((symbol_short!("pperfpool"),), (pool,));
+        env.events().publish((symbol_short!("pperfpool"),), (pool,));
         Ok(())
     }
 
@@ -3621,10 +3612,7 @@ impl YieldVault {
     /// must be configured before enabling.
     ///
     /// Only the Admin can call this.
-    pub fn set_performance_fee_enabled(
-        env: Env,
-        enabled: bool,
-    ) -> Result<(), VaultError> {
+    pub fn set_performance_fee_enabled(env: Env, enabled: bool) -> Result<(), VaultError> {
         let admin: Address = get_admin(&env).expect("Admin not set");
         admin.require_auth();
         if enabled {
@@ -3650,6 +3638,8 @@ impl YieldVault {
             .instance()
             .get(&DataKeyExt::PerformanceFeeEnabled)
             .unwrap_or(false)
+    }
+
     // ── Utilization-based dynamic fee curve (Issue #1243) ────────────────────
 
     /// Returns the configured dynamic fee curve.
@@ -4575,9 +4565,7 @@ impl YieldVault {
         let mut perf_fee_amount: i128 = 0;
         if perf_enabled && net_yield > 0 {
             let current_watermark = Self::strategy_watermark(env.clone(), strategy.clone());
-            let yield_above_hwm = net_yield
-                .checked_sub(current_watermark)
-                .unwrap_or(0);
+            let yield_above_hwm = net_yield.checked_sub(current_watermark).unwrap_or(0);
             if yield_above_hwm > 0 {
                 let perf_fee_bps: i128 = env
                     .storage()
@@ -4837,18 +4825,18 @@ pub struct ContractMetadata {
     pub contract_paused: bool,
     pub has_strategy: bool,
 }
- #[cfg(test)]
-    #[doc(hidden)]
-    pub fn test_seed_withdrawal_queue_entry(env: Env, user: Address, shares: i128, assets: i128) {
-        let tail = YieldVault::withdrawal_queue_tail(&env);
-        let entry = WithdrawalQueueEntry {
-            user,
-            shares,
-            assets,
-            enqueued_at: env.ledger().timestamp(),
-        };
-        env.storage()
-            .instance()
-            .set(&DataKey::WithdrawalQueueEntry(tail), &entry);
-        YieldVault::set_withdrawal_queue_tail(&env, tail.checked_add(1).expect("queue overflow"));
-    }
+#[cfg(test)]
+#[doc(hidden)]
+pub fn test_seed_withdrawal_queue_entry(env: Env, user: Address, shares: i128, assets: i128) {
+    let tail = YieldVault::withdrawal_queue_tail(&env);
+    let entry = WithdrawalQueueEntry {
+        user,
+        shares,
+        assets,
+        enqueued_at: env.ledger().timestamp(),
+    };
+    env.storage()
+        .instance()
+        .set(&DataKey::WithdrawalQueueEntry(tail), &entry);
+    YieldVault::set_withdrawal_queue_tail(&env, tail.checked_add(1).expect("queue overflow"));
+}

@@ -138,6 +138,30 @@ const options: swaggerJsdoc.Options = {
             shares: { type: 'string', example: '99.5' },
           },
         },
+        HealthResponse: {
+          type: 'object',
+          required: ['status', 'timestamp', 'uptime', 'environment', 'checks'],
+          properties: {
+            status: { type: 'string', example: 'healthy' },
+            timestamp: { type: 'string', format: 'date-time' },
+            uptime: { type: 'number', example: 123.4 },
+            environment: { type: 'string', example: 'production' },
+            checks: {
+              type: 'object',
+              required: ['api', 'cache', 'stellarRpc', 'databasePrimary', 'databaseReplica', 'prisma', 'jobs', 'indexer'],
+              properties: {
+                api: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                cache: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                stellarRpc: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                databasePrimary: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                databaseReplica: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                prisma: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                jobs: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+                indexer: { type: 'string', enum: ['up', 'down', 'degraded', 'unknown'] },
+              },
+            },
+          },
+        },
       },
     },
     tags: [
@@ -160,12 +184,13 @@ const options: swaggerJsdoc.Options = {
               description: 'Service healthy',
               content: {
                 'application/json': {
+                  schema: { $ref: '#/components/schemas/HealthResponse' },
                   example: {
                     status: 'healthy',
                     timestamp: '2024-01-01T00:00:00.000Z',
                     uptime: 123.4,
                     environment: 'production',
-                    checks: { api: 'up', cache: 'up', stellarRpc: 'up' },
+                    checks: { api: 'up', cache: 'up', stellarRpc: 'up', indexer: 'up' },
                   },
                 },
               },
