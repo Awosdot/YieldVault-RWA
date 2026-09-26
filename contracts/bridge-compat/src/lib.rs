@@ -189,7 +189,7 @@ impl BridgeCompat {
         env.storage().instance().set(
             &DataKey::Limits,
             &TransferLimits {
-                per_transfer_limit: 1_000_000_000_000, // 1M USDC (6 decimals)
+                per_transfer_limit: 1_000_000_000_000,  // 1M USDC (6 decimals)
                 epoch_volume_limit: 10_000_000_000_000, // 10M USDC per epoch
                 epoch_duration: 86_400,                 // 24 hours
             },
@@ -253,10 +253,7 @@ impl BridgeCompat {
             .set(&DataKey::ProviderNonce, &provider_id);
 
         // Set as default if first provider
-        let has_default = env
-            .storage()
-            .instance()
-            .has(&DataKey::DefaultProvider);
+        let has_default = env.storage().instance().has(&DataKey::DefaultProvider);
         if !has_default {
             env.storage()
                 .instance()
@@ -283,19 +280,13 @@ impl BridgeCompat {
         env.storage()
             .instance()
             .set(&DataKey::Provider(provider_id), &provider);
-        env.events().publish(
-            (symbol_short!("brgtog"),),
-            (provider_id, enabled),
-        );
+        env.events()
+            .publish((symbol_short!("brgtog"),), (provider_id, enabled));
         Ok(())
     }
 
     /// Update a provider's fee. Admin-only.
-    pub fn set_provider_fee(
-        env: Env,
-        provider_id: u32,
-        fee_bps: i128,
-    ) -> Result<(), BridgeError> {
+    pub fn set_provider_fee(env: Env, provider_id: u32, fee_bps: i128) -> Result<(), BridgeError> {
         Self::require_admin(&env)?;
         if !(0..=BPS_DENOMINATOR).contains(&fee_bps) {
             return Err(BridgeError::InvalidAmount);
@@ -309,10 +300,7 @@ impl BridgeCompat {
     }
 
     /// Set the default provider. Admin-only.
-    pub fn set_default_provider(
-        env: Env,
-        provider_id: u32,
-    ) -> Result<(), BridgeError> {
+    pub fn set_default_provider(env: Env, provider_id: u32) -> Result<(), BridgeError> {
         Self::require_admin(&env)?;
         let _ = Self::get_provider(&env, provider_id)?; // validate exists
         env.storage()
@@ -344,10 +332,7 @@ impl BridgeCompat {
     // ── Transfer limits ────────────────────────────────────────────────────
 
     /// Update transfer limits. Admin-only.
-    pub fn set_transfer_limits(
-        env: Env,
-        limits: TransferLimits,
-    ) -> Result<(), BridgeError> {
+    pub fn set_transfer_limits(env: Env, limits: TransferLimits) -> Result<(), BridgeError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::Limits, &limits);
         Ok(())
@@ -432,15 +417,15 @@ impl BridgeCompat {
         }
 
         // Check per-transfer limit
-        let limits: TransferLimits = env
-            .storage()
-            .instance()
-            .get(&DataKey::Limits)
-            .unwrap_or(TransferLimits {
-                per_transfer_limit: 1_000_000_000_000,
-                epoch_volume_limit: 10_000_000_000_000,
-                epoch_duration: 86_400,
-            });
+        let limits: TransferLimits =
+            env.storage()
+                .instance()
+                .get(&DataKey::Limits)
+                .unwrap_or(TransferLimits {
+                    per_transfer_limit: 1_000_000_000_000,
+                    epoch_volume_limit: 10_000_000_000_000,
+                    epoch_duration: 86_400,
+                });
         if amount > limits.per_transfer_limit {
             return Err(BridgeError::TransferLimitExceeded);
         }
@@ -449,11 +434,7 @@ impl BridgeCompat {
         Self::check_epoch_volume(&env, amount, &limits)?;
 
         // Check token balance
-        let token_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::TokenAsset)
-            .unwrap();
+        let token_addr: Address = env.storage().instance().get(&DataKey::TokenAsset).unwrap();
         let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
         let balance = token_client.balance(&env.current_contract_address());
         if balance < amount {
@@ -520,10 +501,7 @@ impl BridgeCompat {
     ///
     /// In production, this would be triggered by a bridge event listener.
     /// For testnet, admin can manually confirm transfers.
-    pub fn confirm_transfer(
-        env: Env,
-        transfer_id: u64,
-    ) -> Result<(), BridgeError> {
+    pub fn confirm_transfer(env: Env, transfer_id: u64) -> Result<(), BridgeError> {
         Self::require_admin(&env)?;
 
         let mut transfer: BridgeTransfer = env
@@ -543,10 +521,8 @@ impl BridgeCompat {
             .instance()
             .set(&DataKey::Transfer(transfer_id), &transfer);
 
-        env.events().publish(
-            (symbol_short!("brgdone"),),
-            (transfer_id, transfer.amount),
-        );
+        env.events()
+            .publish((symbol_short!("brgdone"),), (transfer_id, transfer.amount));
 
         Ok(())
     }
@@ -555,10 +531,7 @@ impl BridgeCompat {
     ///
     /// If a transfer fails (e.g., bridge timeout), the tokens are returned
     /// to the sender. Admin-only in testnet; production would use oracle.
-    pub fn fail_transfer(
-        env: Env,
-        transfer_id: u64,
-    ) -> Result<(), BridgeError> {
+    pub fn fail_transfer(env: Env, transfer_id: u64) -> Result<(), BridgeError> {
         Self::require_admin(&env)?;
 
         let mut transfer: BridgeTransfer = env
@@ -572,11 +545,7 @@ impl BridgeCompat {
         }
 
         // Refund the sender
-        let token_addr: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::TokenAsset)
-            .unwrap();
+        let token_addr: Address = env.storage().instance().get(&DataKey::TokenAsset).unwrap();
         let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
         token_client.transfer(
             &env.current_contract_address(),
@@ -656,7 +625,9 @@ impl BridgeCompat {
             env.storage().instance().set(&DataKey::EpochStart, &now);
         }
 
-        let new_volume = epoch_volume.checked_add(amount).ok_or(BridgeError::TransferLimitExceeded)?;
+        let new_volume = epoch_volume
+            .checked_add(amount)
+            .ok_or(BridgeError::TransferLimitExceeded)?;
         if new_volume > limits.epoch_volume_limit {
             return Err(BridgeError::TransferLimitExceeded);
         }
@@ -716,7 +687,7 @@ mod tests {
             String::from_str(&env, "Wormhole"),
             BridgeProviderKind::Wormhole,
             endpoint,
-            50,       // 0.5% fee
+            50, // 0.5% fee
             1_000_000_000_000,
             chains,
         )
