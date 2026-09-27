@@ -21,13 +21,17 @@
         },
         "prisma": {
           "type": "boolean"
+        },
+        "indexer": {
+          "type": "boolean"
         }
       },
       "required": [
         "cache",
         "stellarRpc",
         "database",
-        "prisma"
+        "prisma",
+        "indexer"
       ],
       "additionalProperties": false
     }

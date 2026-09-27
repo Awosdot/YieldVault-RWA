@@ -1,4 +1,9 @@
 {
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9.12"
+  },
   "devDependencies": {
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
@@ -6,6 +11,7 @@
     "vitest": "^4.1.5"
   },
   "scripts": {
+    "check:pnpm-version": "node scripts/check-pnpm-version.js",
     "test": "vitest run",
     "validate:frontend-env": "tsx scripts/validate-frontend-env.ts",
     "test:validate-frontend-env": "vitest run --config scripts/vitest.config.ts",
