@@ -316,6 +316,9 @@ const invalidationHooks: InvalidationHook[] = [];
  * Hooks receive the event type and optional metadata and return an array of cache key patterns.
  */
 export function registerInvalidationHook(hook: InvalidationHook): void {
+  if (typeof hook !== 'function') {
+    throw new TypeError('Invalidation hook must be a function');
+  }
   invalidationHooks.push(hook);
 }
 
@@ -332,7 +335,17 @@ export function triggerCacheInvalidation(
   for (const hook of invalidationHooks) {
     try {
       const hookPatterns = hook(eventType, metadata);
-      patterns.push(...hookPatterns);
+      if (!Array.isArray(hookPatterns)) {
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            event: 'invalidation_hook_invalid_return',
+            error: 'Invalidation hook must return an array of cache key patterns',
+          }),
+        );
+        continue;
+      }
+      patterns.push(...hookPatterns.filter((pattern): pattern is string => typeof pattern === 'string'));
     } catch (err) {
       console.error(
         JSON.stringify({
