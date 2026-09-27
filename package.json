@@ -2,11 +2,14 @@
   "devDependencies": {
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
+    "lint-staged": "^17.6.0",
     "tsx": "^4.0.0",
     "vitest": "^4.1.5"
   },
   "scripts": {
+    "prepare": "husky",
     "test": "vitest run",
+    "lint:staged": "lint-staged",
     "validate:frontend-env": "tsx scripts/validate-frontend-env.ts",
     "test:validate-frontend-env": "vitest run --config scripts/vitest.config.ts",
     "validate:contribution-standards": "tsx scripts/validate-contribution-standards.ts",
@@ -15,5 +18,9 @@
     "validate:release-notes": "tsx scripts/validate-release-notes.ts",
     "validate:nfr-baselines": "tsx scripts/validate-nfr-baselines.ts",
     "validate:incident-severity": "tsx scripts/validate-incident-severity.ts"
+  },
+  "lint-staged": {
+    "{frontend,backend}/**/*.{ts,tsx}": "node scripts/lint-staged-runners.js eslint",
+    "contracts/**/*.rs": "node scripts/lint-staged-runners.js rustfmt"
   }
 }
