@@ -61,7 +61,11 @@ pub mod audit_events;
 /// would collide with `YieldVault`'s own exported method names (e.g. `deposit`).
 /// Production vaults interact with strategies generically via `StrategyClient`
 /// against a separately-deployed strategy contract address.
-#[cfg(test)]
+// Exposed beyond the crate so `tests/benchmarks.rs` can register a strategy
+// contract. `benji_strategy` holds no production state and exists only so tests
+// can exercise a real strategy; production vaults talk to a separately
+// deployed strategy through `StrategyClient`.
+#[cfg(any(test, feature = "testutils"))]
 pub mod benji_strategy;
 pub mod errors;
 pub use errors::VaultError;
@@ -280,8 +284,6 @@ pub enum DataKeyExt {
     PerformanceFeeBps,
     PerformanceIncentivePool,
     PerformanceFeeEnabled,
-    // Issue #1173 / #1231: nested to stay within DataKeyExt variant limits
-    Risk(RiskExtKey),
 
     // Issue #1243: utilization-based dynamic fee curve (+ its queued change)
     FeeCurve,
@@ -1381,12 +1383,14 @@ impl YieldVault {
                         .storage()
                         .instance()
                         .get(&DataKeyExt::Risk(RiskExtKey::LastPx));
+                    let last_price = Self::last_oracle_price(&env);
                     oracle::OracleValidator::validate_price_data(
                         &env,
                         &price_data,
                         max_age,
                         Some(oracle::MAX_PRICE_DEVIATION_BPS),
                         last.as_ref(),
+                        last_price.as_ref(),
                     )
                     .map_err(|_| VaultError::OracleValidationFailed)?;
                     Self::set_last_oracle_price(&env, &price_data);
@@ -3197,7 +3201,7 @@ impl YieldVault {
         let to_strategy_preview =
             Self::validate_strategy_response(&env, &to_strategy, &token_addr)?;
         crate::risk_limits::check_invest_exposure(
-            Self::total_assets(env.clone()),
+            Self::total_assets(env.clone())?,
             to_strategy_preview,
             amount,
             &Self::load_protocol_limits(&env),
@@ -3565,7 +3569,8 @@ impl YieldVault {
         let admin: Address = get_admin(&env).expect("Admin not set");
         admin.require_auth();
         if !(0..=10_000).contains(&bps) {
-            return Err(VaultError::InvalidPerformanceFeeBps);
+            // Reuses `InvalidFeeBps`: the error enum is capped at 50 cases.
+            return Err(VaultError::InvalidFeeBps);
         }
         env.storage()
             .instance()
@@ -3621,7 +3626,9 @@ impl YieldVault {
                 .instance()
                 .get(&DataKeyExt::PerformanceIncentivePool);
             if pool.is_none() {
-                return Err(VaultError::PerformanceIncentivePoolNotConfigured);
+                // Reuses `GovernanceSignersNotConfigured` (a required
+                // participant is not set): the error enum is capped at 50 cases.
+                return Err(VaultError::GovernanceSignersNotConfigured);
             }
         }
         env.storage()
@@ -3661,10 +3668,18 @@ impl YieldVault {
     /// Like [`Self::total_assets`], this reads through to the strategy (and
     /// validates the oracle when one is enabled), so it can fail for the same
     /// reasons that call can.
-    pub fn utilization_bps(env: Env) -> i128 {
+    ///
+    /// ### Errors
+    /// * [`VaultError::OracleValidationFailed`] - the oracle price failed the
+    ///   staleness/deviation policy backing [`Self::total_assets`].
+    /// * [`VaultError::MathOverflow`] - total assets overflowed the add.
+    pub fn utilization_bps(env: Env) -> Result<i128, VaultError> {
         let idle = Self::get_state(&env).total_assets;
-        let total = Self::total_assets(env.clone());
-        fee_curve::utilization_bps(total.saturating_sub(idle), total)
+        let total = Self::total_assets(env.clone())?;
+        Ok(fee_curve::utilization_bps(
+            total.saturating_sub(idle),
+            total,
+        ))
     }
 
     /// Returns the protocol fee (bps) the vault would charge on yield reported
@@ -3673,13 +3688,17 @@ impl YieldVault {
     /// While the curve is disabled — the default — this is exactly
     /// [`Self::fee_bps`] and performs no strategy or oracle call. Once enabled,
     /// it is the curve's fee at the current [`Self::utilization_bps`].
-    pub fn effective_fee_bps(env: Env) -> i128 {
+    ///
+    /// ### Errors
+    /// * The same errors as [`Self::utilization_bps`], which this reads to
+    ///   derive the rate.
+    pub fn effective_fee_bps(env: Env) -> Result<i128, VaultError> {
         let curve = Self::fee_curve(env.clone());
         let static_fee_bps = Self::fee_bps(env.clone());
         if !curve.enabled {
-            return static_fee_bps;
+            return Ok(static_fee_bps);
         }
-        fee_curve::fee_bps_at(&curve, Self::utilization_bps(env))
+        Ok(fee_curve::fee_bps_at(&curve, Self::utilization_bps(env)?))
     }
 
     /// Queue a new dynamic fee curve. Takes effect once
@@ -4028,9 +4047,14 @@ impl YieldVault {
             &balance,
         );
 
+        // `feeclm` data is (amount claimed, treasury balance after claim).
+        // The previous payload referenced an `amount` binding that does not
+        // exist in this function; the claimed amount is `balance`, which is
+        // also what was just transferred to the treasury and zeroed in
+        // storage.
         env.events().publish(
             (symbol_short!("feeclm"), treasury.clone()),
-            (amount, balance),
+            (balance, 0i128),
         );
         Ok(())
     }
@@ -4180,7 +4204,11 @@ impl YieldVault {
 
     /// Returns the remaining cooldown before the next strategy switch is allowed.
     /// Returns 0 if no cooldown is active or the cooldown has elapsed.
-    pub fn strategy_switch_cooldown_remaining(env: Env) -> u64 {
+    ///
+    /// Named `strategy_switch_cooldown_left` rather than
+    /// `strategy_switch_cooldown_remaining`: contract function names are
+    /// capped at 32 characters and the latter is 34.
+    pub fn strategy_switch_cooldown_left(env: Env) -> u64 {
         let cooldown: u64 = env
             .storage()
             .instance()
@@ -4527,7 +4555,7 @@ impl YieldVault {
         let curve = Self::fee_curve(env.clone());
         let static_fee_bps: i128 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
         let (fee_bps, utilization) = if curve.enabled {
-            let utilization = Self::utilization_bps(env.clone());
+            let utilization = Self::utilization_bps(env.clone())?;
             (fee_curve::fee_bps_at(&curve, utilization), utilization)
         } else {
             (static_fee_bps, 0)
@@ -4649,8 +4677,12 @@ impl YieldVault {
         }
 
         set_storage_version(env, target_version);
+        // The previous payload used `admin.clone()`, where `admin` resolves
+        // to the `admin` module rather than the migrator's address. Attribute
+        // the migration to the account that authorized it.
+        let migrator = get_admin(env).unwrap_or(env.current_contract_address());
         env.events().publish(
-            (symbol_short!("migrate"), admin.clone()),
+            (symbol_short!("migrate"), migrator),
             (current_version, target_version),
         );
         Ok(())

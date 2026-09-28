@@ -1601,6 +1601,7 @@ dependencies = [
  "proptest",
  "share-price-math",
  "soroban-sdk",
+ "vault",
 ]
 
 [[package]]

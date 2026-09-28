@@ -143,8 +143,15 @@
             "example": 0
           },
           "apy": {
-            "type": "number",
-            "example": 0
+            "type": ["number", "null"],
+            "example": 8.45,
+            "description": "Annualised APY as a decimal percentage. null when the vault has insufficient price history (e.g. zero shares or fewer than 2 snapshots)."
+          },
+          "apyStatus": {
+            "type": "string",
+            "enum": ["ok", "insufficient_data"],
+            "example": "ok",
+            "description": "ok when apy is a valid number; insufficient_data when apy is null."
           },
           "timestamp": {
             "type": "string",
@@ -483,6 +490,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/VaultSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vaults/{id}/apy": {
+      "get": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "Vault APY",
+        "description": "Returns the annualised APY for the specified vault. Returns `apy: null` with `apyStatus: 'insufficient_data'` when the vault has zero shares or fewer than two price snapshots (e.g. a newly created vault).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Vault identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vault APY result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["apy", "apyStatus", "timestamp"],
+                  "properties": {
+                    "apy": {
+                      "type": ["number", "null"],
+                      "example": 8.45,
+                      "description": "Annualised APY as a decimal percentage. null when insufficient data."
+                    },
+                    "apyStatus": {
+                      "type": "string",
+                      "enum": ["ok", "insufficient_data"],
+                      "example": "ok"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
                 }
               }
             }
