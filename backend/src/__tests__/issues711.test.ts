@@ -46,6 +46,24 @@ describe('#711 API contract schema snapshots', () => {
     expect(issues.some((issue) => issue.message === 'field removed')).toBe(true);
   });
 
+  it('detects newly added required fields as breaking changes', () => {
+    const baseline = zodToJsonShape(HealthResponseSchema);
+    const current = JSON.parse(JSON.stringify(baseline)) as typeof baseline;
+    // Simulate an older snapshot that is missing the 'indexer' field
+    delete current.properties?.checks?.properties?.indexer;
+    current.properties!.checks!.required = (current.properties!.checks!.required ?? []).filter(
+      (k: string) => k !== 'indexer',
+    );
+
+    const issues = diffSchemaShapes(baseline, current, 'GET /health');
+    expect(
+      issues.some(
+        (issue) =>
+          issue.message.includes('new field added') || issue.message.includes('now required'),
+      ),
+    ).toBe(true);
+  });
+
   it('validates a conforming health payload', () => {
     const result = validateResponseAgainstSchema('GET /health', {
       status: 'healthy',

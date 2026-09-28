@@ -243,6 +243,8 @@ export function diffSchemaShapes(
     for (const key of Object.keys(currentProps)) {
       if (!(key in baselineProps)) {
         issues.push({ path: at(key), message: 'new field added to live schema (snapshot drift)' });
+        issues.push({ path: at(key), message: 'new field added — regenerate snapshots with npm run snapshots:write' });
+        continue;
       }
     }
 
@@ -260,6 +262,8 @@ export function diffSchemaShapes(
     for (const key of currentRequired) {
       if (!(key in current.properties ?? {})) {
         issues.push({ path: at(key), message: 'required field missing from live schema properties (invalid schema)' });
+      if (!baselineRequired.has(key)) {
+        issues.push({ path: at(key), message: 'field is now required — regenerate snapshots with npm run snapshots:write' });
       }
     }
   }
