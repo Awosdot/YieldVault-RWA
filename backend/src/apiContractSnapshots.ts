@@ -240,9 +240,30 @@ export function diffSchemaShapes(
       issues.push(...diffSchemaShapes(baselineProps[key], currentProps[key], childPath));
     }
 
+    for (const key of Object.keys(currentProps)) {
+      if (!(key in baselineProps)) {
+        issues.push({ path: at(key), message: 'new field added to live schema (snapshot drift)' });
+        issues.push({ path: at(key), message: 'new field added — regenerate snapshots with npm run snapshots:write' });
+        continue;
+      }
+    }
+
     for (const key of baselineRequired) {
-      if (!currentRequired.has(key)) {
+      if (!(key in baseline.properties ?? {})) {
+        issues.push({ path: at(key), message: 'required field missing from snapshot properties (orphaned reference)' });
+      }
+      if (!(key in currentProps)) {
+        issues.push({ path: at(key), message: 'field removed from live schema but still required in snapshot' });
+      } else if (!currentRequired.has(key)) {
         issues.push({ path: at(key), message: 'field is no longer required (may be breaking for strict clients)' });
+      }
+    }
+
+    for (const key of currentRequired) {
+      if (!(key in current.properties ?? {})) {
+        issues.push({ path: at(key), message: 'required field missing from live schema properties (invalid schema)' });
+      if (!baselineRequired.has(key)) {
+        issues.push({ path: at(key), message: 'field is now required — regenerate snapshots with npm run snapshots:write' });
       }
     }
   }
