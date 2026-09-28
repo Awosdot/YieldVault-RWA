@@ -27,8 +27,8 @@
 //! - Graceful degradation on provider failures
 
 use soroban_sdk::{
-    contract, contractclient, contractimpl, contracttype, symbol_short, Address, Bytes, Env,
-    String, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, Address,
+    Bytes, Env, String, Vec,
 };
 
 // ── Error types ────────────────────────────────────────────────────────────
@@ -644,42 +644,50 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
 
+    /// Register the contract and return a client for it.
+    ///
+    /// The tests below went through `BridgeCompat::…` directly, which reads
+    /// instance storage outside a contract invocation. SDK 22 rejects that
+    /// ("this function is not accessible outside of a contract"), so they now
+    /// go through the generated client like every other test in the workspace.
+    fn setup() -> (Env, BridgeCompatClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(BridgeCompat, ());
+        let client = BridgeCompatClient::new(&env, &id);
+        (env, client)
+    }
+
     #[test]
     fn test_initialize() {
-        let env = Env::default();
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
 
-        env.mock_all_auths();
-
-        BridgeCompat::initialize(env.clone(), admin.clone(), token.clone()).unwrap();
-        assert_eq!(BridgeCompat::admin(env.clone()), Some(admin));
-        assert_eq!(BridgeCompat::token(env.clone()), Some(token));
+        client.initialize(&admin, &token);
+        assert_eq!(client.admin(), Some(admin));
+        assert_eq!(client.token(), Some(token));
     }
 
     #[test]
     fn test_double_initialize_fails() {
-        let env = Env::default();
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
 
-        env.mock_all_auths();
-
-        BridgeCompat::initialize(env.clone(), admin.clone(), token.clone()).unwrap();
-        let result = BridgeCompat::initialize(env.clone(), admin, token);
-        assert_eq!(result, Err(BridgeError::AlreadyInitialized));
+        client.initialize(&admin, &token);
+        let result = client.try_initialize(&admin, &token);
+        assert_eq!(result, Err(Ok(BridgeError::AlreadyInitialized)));
     }
 
     #[test]
     fn test_register_provider() {
-        let env = Env::default();
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
         let endpoint = Address::generate(&env);
 
-        env.mock_all_auths();
-
-        BridgeCompat::initialize(env.clone(), admin, token).unwrap();
+        client.initialize(&admin, &token);
 
         let chains = Vec::from_array(&env, &[1, 2, 3]);
         let id = BridgeCompat::register_provider(
@@ -692,26 +700,33 @@ mod tests {
             chains,
         )
         .unwrap();
+        let chains = Vec::from_array(&env, [1, 2, 3]);
+        let id = client.register_provider(
+            &String::from_str(&env, "Wormhole"),
+            &BridgeProviderKind::Wormhole,
+            &endpoint,
+            &50, // 0.5% fee
+            &1_000_000_000_000,
+            &chains,
+        );
 
         assert_eq!(id, 1);
-        assert_eq!(BridgeCompat::provider_count(env.clone()), 1);
+        assert_eq!(client.provider_count(), 1);
 
-        let provider = BridgeCompat::provider(env.clone(), id).unwrap();
+        let provider = client.provider(&id).unwrap();
         assert_eq!(provider.name, String::from_str(&env, "Wormhole"));
         assert!(provider.enabled);
     }
 
     #[test]
     fn test_transfer_limits() {
-        let env = Env::default();
+        let (env, client) = setup();
         let admin = Address::generate(&env);
         let token = Address::generate(&env);
 
-        env.mock_all_auths();
+        client.initialize(&admin, &token);
 
-        BridgeCompat::initialize(env.clone(), admin, token).unwrap();
-
-        let limits = BridgeCompat::transfer_limits(env.clone());
+        let limits = client.transfer_limits();
         assert_eq!(limits.per_transfer_limit, 1_000_000_000_000);
         assert_eq!(limits.epoch_volume_limit, 10_000_000_000_000);
         assert_eq!(limits.epoch_duration, 86_400);
