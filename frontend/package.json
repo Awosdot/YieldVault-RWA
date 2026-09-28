@@ -88,5 +88,8 @@
       "maxSize": "50 kB",
       "compression": "gzip"
     }
-  ]
+  ],
+  "overrides": {
+    "lodash": "^4.17.21"
+  }
 }
