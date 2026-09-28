@@ -122,21 +122,48 @@ All code changes require tests. We use:
 
 ### Running Tests Locally
 
+YieldVault-RWA is organized as a pnpm workspace monorepo. Tests can be run at the root workspace level or inside individual packages:
+
+#### Monorepo Root Commands: `pnpm test` vs `pnpm -r test`
+
+- **`pnpm test`** (Root Workspace Pipeline): Runs the orchestrated test pipeline across all workspace packages with explicit production flags:
+  ```bash
+  pnpm test
+  # Executes: pnpm --filter backend test -- --runInBand --coverage && pnpm --filter frontend test --run
+  ```
+  - **Backend**: Runs Jest with `--runInBand` (serial worker execution to prevent concurrency collisions on SQLite) and collects coverage reports in `backend/coverage/`.
+  - **Frontend**: Runs Vitest with `--run` in deterministic single-pass mode.
+
+- **`pnpm -r test`** (Recursive Package Run): Executes the `test` lifecycle script defined in each package (`backend`, `frontend`, `packages/api-schemas`) recursively in topological dependency order:
+  ```bash
+  pnpm -r test
+  ```
+  Package-level test scripts are aligned so that running recursively executes with the proper flags (`jest --runInBand --coverage` in backend and `vitest run` in frontend), guaranteeing that backend coverage artifacts are generated and frontend tests run non-interactively without hanging.
+
+#### Running Tests in Individual Packages
+
 ```bash
-# Backend unit tests
-cd backend && npm run test
+# Backend tests (runs Jest with --runInBand and --coverage)
+cd backend && pnpm test
+# Or from root:
+pnpm --filter backend test
 
-# Backend integration tests
-npm run test:integration
+# Frontend unit & component tests (runs Vitest in single-run mode)
+cd frontend && pnpm test
+# Or from root:
+pnpm --filter frontend test
 
-# Frontend unit tests
-cd frontend && npm run test
+# Frontend watch mode (for active local development)
+cd frontend && pnpm test:watch
 
-# E2E tests (requires running services)
-npm run test:e2e
+# Frontend E2E tests (Playwright)
+cd frontend && pnpm test:e2e
 
-# All tests
-npm run test:all
+# Cypress smoke tests
+cd frontend && pnpm test:cypress
+
+# Soroban smart contract tests
+cargo test -p vault
 ```
 
 ### Test Coverage Expectations
