@@ -1,19 +1,60 @@
 {
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9.12"
+  },
+  "name": "yieldvault-rwa",
+  "private": true,
+  "license": "MIT",
   "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
+    "concurrently": "^9.1.2",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
+    "lint-staged": "^17.6.0",
+    "license-checker": "^25.0.1",
     "tsx": "^4.0.0",
     "vitest": "^4.1.5"
   },
   "scripts": {
+    "check:pnpm-version": "node scripts/check-pnpm-version.js",
+    "prepare": "husky",
     "test": "vitest run",
+    "lint:staged": "lint-staged",
+    "commitlint": "commitlint",
+    "dev": "concurrently \"pnpm:dev:backend\" \"pnpm:dev:frontend\"",
+    "dev:backend": "bash scripts/wait-for-db.sh && pnpm --filter backend dev",
+    "dev:frontend": "pnpm --filter frontend dev",
+    "wait-for-db": "bash scripts/wait-for-db.sh",
+    "test": "pnpm --filter backend test -- --runInBand --coverage && pnpm --filter frontend test --run",
+    "test:backend": "pnpm --filter backend test -- --runInBand --coverage",
+    "test:frontend": "pnpm --filter frontend test --run",
+    "test:root": "vitest run",
+    "test:scripts": "vitest run",
+    "test:all": "pnpm --filter backend test -- --runInBand --coverage && pnpm --filter frontend test --run && vitest run",
+    "test:flaky": "pnpm --filter backend test:flaky",
+    "test:flaky-detector": "pnpm --filter backend test:flaky-detector",
+    "test:wait-for-db": "vitest run scripts/wait-for-db.test.ts",
+    "validate:licenses": "tsx scripts/validate-licenses.ts",
+    "test:validate-licenses": "vitest run scripts/validate-licenses.test.ts",
+    "check:licenses": "pnpm validate:licenses && pnpm test:validate-licenses",
+    "compress:images": "bash scripts/compress-pngs.sh",
+    "validate:images": "tsx scripts/validate-image-sizes.ts",
+    "test:validate-images": "vitest run scripts/validate-image-sizes.test.ts",
+    "clean:git-history": "bash scripts/purge-git-large-blobs.sh",
     "validate:frontend-env": "tsx scripts/validate-frontend-env.ts",
     "test:validate-frontend-env": "vitest run --config scripts/vitest.config.ts",
     "validate:contribution-standards": "tsx scripts/validate-contribution-standards.ts",
     "validate:testing-strategy": "tsx scripts/validate-testing-strategy.ts",
+    "test:validate-workspace-test-scripts": "vitest run scripts/validate-workspace-test-scripts.test.ts",
     "validate:sprint-and-triage": "tsx scripts/validate-sprint-and-triage-conventions.ts",
     "validate:release-notes": "tsx scripts/validate-release-notes.ts",
     "validate:nfr-baselines": "tsx scripts/validate-nfr-baselines.ts",
     "validate:incident-severity": "tsx scripts/validate-incident-severity.ts"
+  },
+  "lint-staged": {
+    "{frontend,backend}/**/*.{ts,tsx}": "node scripts/lint-staged-runners.js eslint",
+    "contracts/**/*.rs": "node scripts/lint-staged-runners.js rustfmt"
   }
 }
