@@ -159,6 +159,35 @@ npm run format
 
 Code must pass linting before PR approval.
 
+### Commit Messages
+
+Commit messages must use [Conventional Commits](https://www.conventionalcommits.org/) with a **lower-case** type drawn from this list:
+
+`fix` · `feat` · `chore` · `docs` · `test` · `refactor`
+
+```bash
+# Valid
+fix: correct rounding on share price accrual
+feat(frontend): add vesting schedule to dashboard
+
+# Rejected — the type must be lower-case
+Fix: correct rounding on share price accrual
+FEAT: add vesting schedule to dashboard
+```
+
+The lower-case requirement is enforced by `commitlint.config.js` through the
+`.husky/commit-msg` hook, so an upper-case type is rejected at commit time. It
+also keeps the changelog correct: `cliff.toml` sets `conventional_commits = true`
+and groups release notes by parsed type, and git-cliff's parser accepts both
+cases. Without this rule `Fix:` would be parsed as its own type and split into a
+separate changelog group from `fix:`.
+
+To check a message without committing:
+
+```bash
+echo "Fix: something" | npx commitlint
+```
+
 ## Pull Request Process
 
 ### Before Opening a PR

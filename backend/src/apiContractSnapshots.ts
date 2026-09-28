@@ -240,9 +240,22 @@ export function diffSchemaShapes(
       issues.push(...diffSchemaShapes(baselineProps[key], currentProps[key], childPath));
     }
 
+    for (const key of Object.keys(currentProps)) {
+      if (!(key in baselineProps)) {
+        issues.push({ path: at(key), message: 'new field added — regenerate snapshots with npm run snapshots:write' });
+        continue;
+      }
+    }
+
     for (const key of baselineRequired) {
       if (!currentRequired.has(key)) {
         issues.push({ path: at(key), message: 'field is no longer required (may be breaking for strict clients)' });
+      }
+    }
+
+    for (const key of currentRequired) {
+      if (!baselineRequired.has(key)) {
+        issues.push({ path: at(key), message: 'field is now required — regenerate snapshots with npm run snapshots:write' });
       }
     }
   }
