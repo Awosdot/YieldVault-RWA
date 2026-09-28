@@ -10,6 +10,7 @@ updates:
     labels:
       - "dependencies"
       - "security"
+      - "general"
 
   - package-ecosystem: "npm"
     directory: "/backend"
@@ -21,6 +22,7 @@ updates:
     labels:
       - "dependencies"
       - "security"
+      - "general"
 
   - package-ecosystem: "cargo"
     directory: "/"
@@ -32,6 +34,7 @@ updates:
     labels:
       - "dependencies"
       - "security"
+      - "general"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -42,3 +45,4 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+      - "general"
