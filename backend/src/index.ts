@@ -135,6 +135,7 @@ import { getEventPollingHealth, startEventPollingService, stopEventPollingServic
 import { eventOutboxService } from './eventOutbox';
 import { prisma, getPrismaRuntimeConfig } from './prisma';
 import { getPrismaClient } from './prismaClient';
+import { computeVaultApy } from './services/apy';
 import {
   verifyWebhookEndpoint,
   registerWebhookEndpoint,
@@ -1146,6 +1147,39 @@ app.get('/api/v2/vaults/:id/health', (req: Request, res: Response) => {
   res.set('X-API-Preview', 'v2');
   res.redirect(307, `/api/v1/vaults/${encodeURIComponent(req.params.id)}/health${qs}`);
 });
+
+/**
+ * GET /api/v1/vaults/:id/apy
+ *
+ * Returns the annualised APY for the vault.  Returns `apy: null` with
+ * `apyStatus: 'insufficient_data'` for new vaults that have zero shares or
+ * fewer than 2 price snapshots, preventing Infinity / NaN from reaching the
+ * frontend (Issue #1456).
+ */
+app.get(
+  '/api/v1/vaults/:id/apy',
+  readsLimiter,
+  cacheMiddleware({ ttl: cacheVaultMetricsTtl }),
+  createTimeoutFor.read({
+    timeoutMs: 1500,
+    routeName: '/api/v1/vaults/:id/apy',
+    message: 'Vault APY took too long to load',
+    fallbackResponse: () => ({
+      error: 'Service Unavailable',
+      status: 503,
+      code: 'VAULT_APY_TIMEOUT',
+      message: 'Vault APY is temporarily unavailable. Please try again shortly.',
+      timestamp: new Date().toISOString(),
+    }),
+  }),
+  async (_req: Request, res: Response) => {
+    const result = await computeVaultApy();
+    res.json({
+      ...result,
+      timestamp: new Date().toISOString(),
+    });
+  },
+);
 
 /**
  * @openapi
