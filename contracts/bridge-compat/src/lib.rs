@@ -689,6 +689,17 @@ mod tests {
 
         client.initialize(&admin, &token);
 
+        let chains = Vec::from_array(&env, &[1, 2, 3]);
+        let id = BridgeCompat::register_provider(
+            env.clone(),
+            String::from_str(&env, "Wormhole"),
+            BridgeProviderKind::Wormhole,
+            endpoint,
+            50, // 0.5% fee
+            1_000_000_000_000,
+            chains,
+        )
+        .unwrap();
         let chains = Vec::from_array(&env, [1, 2, 3]);
         let id = client.register_provider(
             &String::from_str(&env, "Wormhole"),

@@ -30,7 +30,10 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          components: clippy
+          # Issue #1302: `profile: minimal` does not install rustfmt, so the
+          # `cargo fmt --all -- --check` step below would fail with
+          # "no such command" instead of actually gating on formatting.
+          components: clippy, rustfmt
           profile: minimal
           override: true
 
