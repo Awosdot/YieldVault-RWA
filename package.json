@@ -7,6 +7,7 @@
     "concurrently": "^9.1.2",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
+    "lint-staged": "^17.6.0",
     "license-checker": "^25.0.1",
     "tsx": "^4.0.0",
     "vitest": "^4.1.5"
@@ -14,6 +15,7 @@
   "scripts": {
     "prepare": "husky",
     "test": "vitest run",
+    "lint:staged": "lint-staged",
     "commitlint": "commitlint",
     "dev": "concurrently \"pnpm:dev:backend\" \"pnpm:dev:frontend\"",
     "dev:backend": "bash scripts/wait-for-db.sh && pnpm --filter yieldvault-backend dev",
@@ -38,5 +40,9 @@
     "validate:release-notes": "tsx scripts/validate-release-notes.ts",
     "validate:nfr-baselines": "tsx scripts/validate-nfr-baselines.ts",
     "validate:incident-severity": "tsx scripts/validate-incident-severity.ts"
+  },
+  "lint-staged": {
+    "{frontend,backend}/**/*.{ts,tsx}": "node scripts/lint-staged-runners.js eslint",
+    "contracts/**/*.rs": "node scripts/lint-staged-runners.js rustfmt"
   }
 }
