@@ -3,6 +3,7 @@
   "private": true,
   "license": "MIT",
   "devDependencies": {
+    "@commitlint/cli": "^21.2.3",
     "concurrently": "^9.1.2",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
@@ -11,6 +12,9 @@
     "vitest": "^4.1.5"
   },
   "scripts": {
+    "prepare": "husky",
+    "test": "vitest run",
+    "commitlint": "commitlint",
     "dev": "concurrently \"pnpm:dev:backend\" \"pnpm:dev:frontend\"",
     "dev:backend": "bash scripts/wait-for-db.sh && pnpm --filter yieldvault-backend dev",
     "dev:frontend": "pnpm --filter frontend dev",
