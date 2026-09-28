@@ -307,7 +307,10 @@ export function cacheMiddleware(options: CacheOptions) {
 
 // ── Invalidation ─────────────────────────────────────────────────────────────
 
-type InvalidationHook = (eventType: string, metadata?: Record<string, unknown>) => string[];
+type InvalidationHook = (
+  eventType: string,
+  metadata?: Record<string, unknown>,
+) => string[] | Promise<string[]> | Promise<void>;
 
 const invalidationHooks: InvalidationHook[] = [];
 
@@ -335,6 +338,23 @@ export function triggerCacheInvalidation(
   for (const hook of invalidationHooks) {
     try {
       const hookPatterns = hook(eventType, metadata);
+      if (hookPatterns instanceof Promise) {
+        void hookPatterns.catch((err) => {
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'invalidation_hook_error',
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        });
+        continue;
+      }
+
+      if (!Array.isArray(hookPatterns)) {
+        throw new TypeError('invalidation hook must return an array of patterns');
+      }
+
       if (!Array.isArray(hookPatterns)) {
         console.error(
           JSON.stringify({

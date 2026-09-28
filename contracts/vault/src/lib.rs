@@ -1379,12 +1379,17 @@ impl YieldVault {
                     let token = Self::token(env.clone());
                     let price_data = oracle_client.get_price(&token, &token);
                     let max_age = Self::oracle_heartbeat(env.clone());
+                    let last: Option<oracle::PriceData> = env
+                        .storage()
+                        .instance()
+                        .get(&DataKeyExt::Risk(RiskExtKey::LastPx));
                     let last_price = Self::last_oracle_price(&env);
                     oracle::OracleValidator::validate_price_data(
                         &env,
                         &price_data,
                         max_age,
                         Some(oracle::MAX_PRICE_DEVIATION_BPS),
+                        last.as_ref(),
                         last_price.as_ref(),
                     )
                     .map_err(|_| VaultError::OracleValidationFailed)?;
