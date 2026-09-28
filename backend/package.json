@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "build": "npm run prisma:generate && tsc",
     "build": "cd ../packages/api-schemas && npm run build && cd ../../backend && tsc",
     "start": "node dist/index.js",
     "test": "jest --runInBand --coverage",
