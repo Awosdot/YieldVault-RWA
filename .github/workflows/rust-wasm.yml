@@ -47,6 +47,13 @@ jobs:
       - name: Run cargo fmt check
         run: cargo fmt --all -- --check
 
+      # Issue #1304: the workspace previously only built `-p share-price-math`
+      # and `-p mock-strategy`, so a vault or bridge-compat that did not compile
+      # could still merge. `cargo check --all` compiles every workspace member
+      # and its test targets. `--locked` also fails if Cargo.lock is stale.
+      - name: Type-check every contract crate
+        run: cargo check --workspace --all-targets --locked
+
       - name: Run clippy (share-price math)
         run: cargo clippy -p share-price-math --all-targets -- -D warnings
 
