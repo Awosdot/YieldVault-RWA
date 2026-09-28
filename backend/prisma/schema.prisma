@@ -604,3 +604,22 @@ model WriteAheadAuditEntry {
   @@index([configType])
   @@index([actor])
 }
+
+model IdempotencyKey {
+  id            String    @id @default(uuid())
+  keyId         String
+  tenantId      String
+  walletAddress String?
+  operation     String
+  status        String    @default("pending") // pending | completed | failed
+  requestHash   String
+  responseHash  String?
+  responseBody  String?
+  statusCode    Int?
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+  expiresAt     DateTime
+
+  @@unique([keyId, tenantId])
+  @@index([expiresAt])
+}
