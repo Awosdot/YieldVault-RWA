@@ -51,7 +51,28 @@
     "validate:sprint-and-triage": "tsx scripts/validate-sprint-and-triage-conventions.ts",
     "validate:release-notes": "tsx scripts/validate-release-notes.ts",
     "validate:nfr-baselines": "tsx scripts/validate-nfr-baselines.ts",
-    "validate:incident-severity": "tsx scripts/validate-incident-severity.ts"
+    "validate:incident-severity": "tsx scripts/validate-incident-severity.ts",
+    "validate:codeowners": "tsx scripts/validate-codeowners.ts",
+    "test:validate-codeowners": "vitest run scripts/validate-codeowners.test.ts",
+    "check:codeowners": "pnpm validate:codeowners && pnpm test:validate-codeowners",
+    "validate:pr-template": "tsx scripts/validate-pr-template.ts",
+    "test:validate-pr-template": "vitest run scripts/validate-pr-template.test.ts",
+    "check:pr-template": "pnpm validate:pr-template && pnpm test:validate-pr-template",
+    "validate:renovate": "tsx scripts/validate-renovate-config.ts",
+    "test:validate-renovate": "vitest run scripts/validate-renovate-config.test.ts",
+    "audit:pnpm": "pnpm audit --audit-level=high",
+    "check:security-audit": "pnpm validate:renovate && pnpm test:validate-renovate && pnpm audit --audit-level=high"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash": "^4.17.21"
+    }
+  },
+  "overrides": {
+    "lodash": "^4.17.21"
+  },
+  "resolutions": {
+    "lodash": "^4.17.21"
   },
   "lint-staged": {
     "{frontend,backend}/**/*.{ts,tsx}": "node scripts/lint-staged-runners.js eslint",
