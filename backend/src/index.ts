@@ -135,6 +135,7 @@ import { getEventPollingHealth, startEventPollingService, stopEventPollingServic
 import { eventOutboxService } from './eventOutbox';
 import { prisma, getPrismaRuntimeConfig } from './prisma';
 import { getPrismaClient } from './prismaClient';
+import { computeVaultApy } from './services/apy';
 import {
   verifyWebhookEndpoint,
   registerWebhookEndpoint,
@@ -431,7 +432,9 @@ async function buildReferralStatsSnapshot(wallet: string) {
       body: {
         error: 'Not Found',
         status: 404,
+        code: 'ROUTE_NOT_FOUND',
         message: 'No referral activity found for this wallet',
+        retryable: false,
       },
     };
   }
@@ -1144,6 +1147,39 @@ app.get('/api/v2/vaults/:id/health', (req: Request, res: Response) => {
   res.set('X-API-Preview', 'v2');
   res.redirect(307, `/api/v1/vaults/${encodeURIComponent(req.params.id)}/health${qs}`);
 });
+
+/**
+ * GET /api/v1/vaults/:id/apy
+ *
+ * Returns the annualised APY for the vault.  Returns `apy: null` with
+ * `apyStatus: 'insufficient_data'` for new vaults that have zero shares or
+ * fewer than 2 price snapshots, preventing Infinity / NaN from reaching the
+ * frontend (Issue #1456).
+ */
+app.get(
+  '/api/v1/vaults/:id/apy',
+  readsLimiter,
+  cacheMiddleware({ ttl: cacheVaultMetricsTtl }),
+  createTimeoutFor.read({
+    timeoutMs: 1500,
+    routeName: '/api/v1/vaults/:id/apy',
+    message: 'Vault APY took too long to load',
+    fallbackResponse: () => ({
+      error: 'Service Unavailable',
+      status: 503,
+      code: 'VAULT_APY_TIMEOUT',
+      message: 'Vault APY is temporarily unavailable. Please try again shortly.',
+      timestamp: new Date().toISOString(),
+    }),
+  }),
+  async (_req: Request, res: Response) => {
+    const result = await computeVaultApy();
+    res.json({
+      ...result,
+      timestamp: new Date().toISOString(),
+    });
+  },
+);
 
 /**
  * @openapi
@@ -2045,9 +2081,6 @@ app.post('/admin/emails/replay/:id', validateApiKey, async (req: Request, res: R
  */
 app.post('/admin/allowlist/add', validateApiKey, validate({ body: AllowlistWalletBodySchema }), async (req: Request, res: Response) => {
   const { walletAddress } = req.body;
-  if (!walletAddress || typeof walletAddress !== 'string') {
-    throw new ValidationError('Missing or invalid walletAddress in request body');
-  }
   const added = addAddress(walletAddress);
   const actor = resolveActingAdminAddress(req);
 
@@ -2084,12 +2117,14 @@ app.post('/admin/allowlist/add', validateApiKey, validate({ body: AllowlistWalle
  */
 app.delete('/admin/allowlist/remove', validateApiKey, validate({ body: AllowlistWalletBodySchema }), async (req: Request, res: Response) => {
   const { walletAddress } = req.body;
-  if (!walletAddress || typeof walletAddress !== 'string') {
-    throw new ValidationError('Missing or invalid walletAddress in request body');
-  }
   const removed = removeAddress(walletAddress);
   if (!removed) {
-    throw new NotFoundError('Wallet address not found in allowlist');
+    res.status(404).json({
+      error: 'Not Found',
+      status: 404,
+      message: 'Wallet address not found in allowlist',
+    });
+    return;
   }
 
   const actor = resolveActingAdminAddress(req);
@@ -2405,12 +2440,22 @@ app.get('/admin/impersonate/:wallet', validateApiKey, async (req: Request, res: 
 
   if (!wallet) {
     req.adminAuditAction = 'admin.impersonate.invalid';
-    throw new ValidationError('wallet path parameter is required');
+    res.status(400).json({
+      error: 'Bad Request',
+      status: 400,
+      message: 'wallet path parameter is required',
+    });
+    return;
   }
 
   if (!hasRequiredApiKeyRole(req, 'super-admin')) {
     req.adminAuditAction = 'admin.impersonate.denied';
-    throw new ForbiddenError('Super-admin role is required for impersonation');
+    res.status(403).json({
+      error: 'Forbidden',
+      status: 403,
+      message: 'Super-admin role is required for impersonation',
+    });
+    return;
   }
 
   if (!sessionId && process.env.IMPERSONATION_SESSION_STORAGE) {
@@ -2477,13 +2522,17 @@ app.get('/admin/impersonate/:wallet', validateApiKey, async (req: Request, res: 
           }
         : undefined,
     });
-    } catch (error) {
-      req.adminAuditAction = 'admin.impersonate.failed';
-      req.adminAuditMetadata = {
-        ...req.adminAuditMetadata,
-        error: error instanceof Error ? error.message : String(error),
-      };
-      throw new InternalError('Failed to build impersonated vault state');
+  } catch (error) {
+    req.adminAuditAction = 'admin.impersonate.failed';
+    req.adminAuditMetadata = {
+      ...req.adminAuditMetadata,
+      error: error instanceof Error ? error.message : String(error),
+    };
+    res.status(500).json({
+      error: 'Internal Server Error',
+      status: 500,
+      message: 'Failed to build impersonated vault state',
+    });
   }
 });
 
@@ -2571,12 +2620,22 @@ app.get('/admin/receipts/:id/verify', validateApiKey, async (req: Request, res: 
 app.post('/admin/api-keys/register', validateApiKey, validate({ body: ApiKeyRegisterSchema }), async (req: Request, res: Response) => {
   const { key, role: requestedRole } = req.body;
   if (!key || typeof key !== 'string' || !key.trim()) {
-    throw new ValidationError('Missing key in request body');
+    res.status(400).json({
+      error: 'Bad Request',
+      status: 400,
+      message: 'Missing key in request body',
+    });
+    return;
   }
 
   const role = normalizeApiKeyRole(requestedRole) || 'admin';
   if (role === 'super-admin' && !hasRequiredApiKeyRole(req, 'super-admin')) {
-    throw new ForbiddenError('Super-admin role is required to register super-admin API keys');
+    res.status(403).json({
+      error: 'Forbidden',
+      status: 403,
+      message: 'Super-admin role is required to register super-admin API keys',
+    });
+    return;
   }
 
   const normalizedKey = key.trim();
@@ -2865,7 +2924,12 @@ app.patch('/admin/webhooks/:id', validateApiKey, validate({ params: IdParamSchem
 
   const endpoint = updateWebhookEndpoint(req.params.id, req.body || {});
   if (!endpoint) {
-    throw new NotFoundError('Webhook endpoint not found');
+    res.status(404).json({
+      error: 'Not Found',
+      status: 404,
+      message: 'Webhook endpoint not found',
+    });
+    return;
   }
 
   res.status(200).json({
