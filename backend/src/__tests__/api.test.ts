@@ -9,6 +9,7 @@ process.env.ADAPTIVE_THROTTLE_SCORE_THRESHOLD = '6';
 import request from 'supertest';
 import app from '../index';
 import { resetAdaptiveThrottleStateForTests } from '../middleware/adaptiveThrottle';
+import redis from '../utils/redis';
 
 describe('Backend API', () => {
   beforeEach(() => {
@@ -63,6 +64,40 @@ describe('Backend API', () => {
       expect(response.body.dependencies).toHaveProperty('stellarRpc');
       expect(typeof response.body.dependencies.cache).toBe('boolean');
       expect(typeof response.body.dependencies.stellarRpc).toBe('boolean');
+    });
+
+    it('should include redis check in dependencies', async () => {
+      const response = await request(app).get('/ready');
+
+      expect(response.body.dependencies).toHaveProperty('redis');
+      expect(['up', 'down']).toContain(response.body.dependencies.redis.status);
+    });
+
+    it('should report redis as up with optional flag when REDIS_URL is not set', async () => {
+      const originalRedisUrl = process.env.REDIS_URL;
+      delete process.env.REDIS_URL;
+
+      const response = await request(app).get('/ready');
+
+      expect(response.body.dependencies.redis.status).toBe('up');
+      expect(response.body.dependencies.redis.optional).toBe(true);
+
+      if (originalRedisUrl !== undefined) {
+        process.env.REDIS_URL = originalRedisUrl;
+      }
+    });
+
+    it('should return 503 when redis.ping throws', async () => {
+      const pingSpy = jest
+        .spyOn(redis, 'ping')
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+      const response = await request(app).get('/ready');
+
+      expect(response.status).toBe(503);
+      expect(response.body.dependencies.redis.status).toBe('down');
+
+      pingSpy.mockRestore();
     });
   });
 

@@ -19,7 +19,6 @@
  *   REDIS_CACHE_KEY_PREFIX     – Key namespace prefix (default: "cache:")
  *   REDIS_CACHE_CONNECT_TIMEOUT_MS – Connection timeout (default: 2000)
  *   REDIS_CACHE_COMMAND_TIMEOUT_MS – Per-command timeout (default: 500)
- *   REDIS_CACHE_PING_TIMEOUT_MS    – Health-check ping timeout (default: 500)
  *
  * TTL values are always specified in milliseconds by callers; this module
  * converts them to seconds when writing to Redis (Redis TTL is in seconds).
@@ -34,7 +33,6 @@ import { responseCache } from './middleware/cache';
 const DEFAULT_KEY_PREFIX = 'cache:';
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 500;
-const DEFAULT_PING_TIMEOUT_MS = 500;
 
 function resolveEnvInt(key: string, defaultValue: number): number {
   const raw = process.env[key];
@@ -51,10 +49,6 @@ const CONNECT_TIMEOUT_MS = resolveEnvInt(
 const COMMAND_TIMEOUT_MS = resolveEnvInt(
   'REDIS_CACHE_COMMAND_TIMEOUT_MS',
   DEFAULT_COMMAND_TIMEOUT_MS,
-);
-const PING_TIMEOUT_MS = resolveEnvInt(
-  'REDIS_CACHE_PING_TIMEOUT_MS',
-  DEFAULT_PING_TIMEOUT_MS,
 );
 
 // ─── Prometheus Metrics ───────────────────────────────────────────────────────
@@ -321,31 +315,21 @@ class RedisCacheClient {
   }
 
   /**
-   * Ping the Redis server with a bounded timeout.
-   * Returns `'PONG'` on success, or `null` when Redis is unavailable,
-   * not configured, or the ping exceeds `PING_TIMEOUT_MS`.
-   *
-   * Used by the /ready health check so a dead cache cannot keep the pod
-   * in the k8s Service endpoints list.
+   * Ping the Redis server with a hard timeout.
+   * Returns 'PONG' when Redis responds in time, otherwise null.
+   * Used by the /ready health check to avoid blocking on a dead cache.
    */
-  async pingWithTimeout(timeoutMs: number = PING_TIMEOUT_MS): Promise<string | null> {
+  async pingWithTimeout(timeoutMs: number): Promise<string | null> {
     if (!this._isReady || !this.client) return null;
 
-    let timer: NodeJS.Timeout | undefined;
     try {
-      const timeout = new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs);
-        if (typeof timer.unref === 'function') timer.unref();
-      });
       const result = await Promise.race([
-        this.client.ping().catch(() => null),
-        timeout,
+        this.client.ping(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
       ]);
       return result;
     } catch {
       return null;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 
@@ -480,26 +464,26 @@ export async function getRedisCacheHealth(): Promise<'up' | 'degraded'> {
 }
 
 /**
- * Detailed Redis health for the /ready endpoint.
+ * Detailed Redis health status for the /ready endpoint.
  *
- * - When REDIS_URL is not set, returns `{ status: 'up', optional: true }` so
- *   the pod is considered ready (in-memory LRU is the sole, always-available
- *   store).
- * - When REDIS_URL is set, performs a bounded PING. Returns `{ status: 'up' }`
- *   on PONG, otherwise `{ status: 'down' }` with the failure reason.
+ * - When REDIS_URL is not set, reports `{ status: 'up', optional: true }`
+ *   because the in-memory LRU fallback is always available.
+ * - When REDIS_URL is set and PING succeeds within the timeout, reports
+ *   `{ status: 'up' }`.
+ * - When REDIS_URL is set but PING fails or times out, reports
+ *   `{ status: 'down' }` so k8s can stop routing traffic to the pod.
  */
-export async function getRedisReadyCheck(): Promise<{
-  status: 'up' | 'down';
-  optional?: boolean;
-  reason?: string;
-}> {
+export async function getRedisReadyCheck(
+  timeoutMs: number = 500,
+): Promise<{ status: 'up' | 'down'; optional?: boolean }> {
   if (!redisCacheClient.isConfigured) {
     return { status: 'up', optional: true };
   }
 
-  const pong = await redisCacheClient.pingWithTimeout(PING_TIMEOUT_MS);
+  const pong = await redisCacheClient.pingWithTimeout(timeoutMs);
   if (pong === 'PONG') {
     return { status: 'up' };
   }
-  return { status: 'down', reason: 'redis ping failed or timed out' };
+
+  return { status: 'down' };
 }

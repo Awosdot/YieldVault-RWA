@@ -26,28 +26,17 @@
           "type": "boolean"
         },
         "redis": {
-          "type": "object",
+          "type: "object",
           "properties": {
             "status": {
               "type": "string",
-              "enum": [
-                "up",
-                "down"
-              ]
+              "enum": ["up", "down", "degraded"]
             },
             "optional": {
               "type": "boolean"
-            },
-            "latencyMs": {
-              "type": "number"
-            },
-            "error": {
-              "type": "string"
             }
           },
-          "required": [
-            "status"
-          ],
+          "required": ["status"],
           "additionalProperties": false
         }
       },
