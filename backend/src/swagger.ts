@@ -190,7 +190,6 @@ const options: swaggerJsdoc.Options = {
                     timestamp: '2024-01-01T00:00:00.000Z',
                     uptime: 123.4,
                     environment: 'production',
-                    checks: { api: 'up', cache: 'up', stellarRpc: 'up', indexer: 'up' },
                     lastIndexedLedger: 12345678,
                     checks: { api: 'up', cache: 'up', stellarRpc: 'up', databasePrimary: 'up', databaseReplica: 'up', prisma: 'up', jobs: 'up', indexer: 'up' },
                     sorobanCircuitBreaker: { state: 'closed', failures: 0, retryAfterMs: 0 },
