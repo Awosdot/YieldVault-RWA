@@ -8,23 +8,25 @@ export interface DependencyProbeState {
   lastError: string | null;
   lastErrorAt: string | null;
   consecutiveFailures: number;
+  optional?: boolean;
 }
 
-export type DependencyName = 'database' | 'cache' | 'stellarRpc' | 'prisma' | 'queue' | 'indexer';
+export type DependencyName = 'database' | 'cache' | 'stellarRpc' | 'prisma' | 'queue' | 'indexer' | 'redis';
 
 type ProbeFunction = () => Promise<'up' | 'down'>;
 
 interface ProbeRegistration {
   name: DependencyName;
   probe: ProbeFunction;
+  optional?: boolean;
 }
 
 class HealthProbeService {
   private probes = new Map<DependencyName, ProbeRegistration>();
   private states = new Map<DependencyName, DependencyProbeState>();
 
-  register(name: DependencyName, probe: ProbeFunction): void {
-    this.probes.set(name, { name, probe });
+  register(name: DependencyName, probe: ProbeFunction, options?: { optional?: boolean }): void {
+    this.probes.set(name, { name, probe, optional: options?.optional });
     if (!this.states.has(name)) {
       this.states.set(name, {
         status: 'up',
@@ -33,7 +35,11 @@ class HealthProbeService {
         lastError: null,
         lastErrorAt: null,
         consecutiveFailures: 0,
+        optional: options?.optional,
       });
+    } else if (options?.optional !== undefined) {
+      const existing = this.states.get(name)!;
+      existing.optional = options.optional;
     }
   }
 
@@ -58,6 +64,7 @@ class HealthProbeService {
       state.status = result;
       state.latencyMs = latencyMs;
       state.lastCheckedAt = new Date().toISOString();
+      state.optional = registration.optional;
 
       if (result === 'up') {
         state.consecutiveFailures = 0;
@@ -75,6 +82,7 @@ class HealthProbeService {
       state.lastError = error instanceof Error ? error.message : String(error);
       state.lastErrorAt = new Date().toISOString();
       state.consecutiveFailures += 1;
+      state.optional = registration.optional;
     }
 
     if (state.consecutiveFailures > 0 && state.consecutiveFailures < 3 && state.status !== 'up') {
@@ -114,6 +122,10 @@ class HealthProbeService {
       if (state.status === 'down') return false;
     }
     return true;
+  }
+
+  isOptional(name: DependencyName): boolean {
+    return this.probes.get(name)?.optional === true;
   }
 
   private createDefaultState(): DependencyProbeState {

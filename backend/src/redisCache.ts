@@ -19,6 +19,7 @@
  *   REDIS_CACHE_KEY_PREFIX     – Key namespace prefix (default: "cache:")
  *   REDIS_CACHE_CONNECT_TIMEOUT_MS – Connection timeout (default: 2000)
  *   REDIS_CACHE_COMMAND_TIMEOUT_MS – Per-command timeout (default: 500)
+ *   REDIS_CACHE_PING_TIMEOUT_MS    – Health-check ping timeout (default: 500)
  *
  * TTL values are always specified in milliseconds by callers; this module
  * converts them to seconds when writing to Redis (Redis TTL is in seconds).
@@ -33,6 +34,7 @@ import { responseCache } from './middleware/cache';
 const DEFAULT_KEY_PREFIX = 'cache:';
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 500;
+const DEFAULT_PING_TIMEOUT_MS = 500;
 
 function resolveEnvInt(key: string, defaultValue: number): number {
   const raw = process.env[key];
@@ -49,6 +51,10 @@ const CONNECT_TIMEOUT_MS = resolveEnvInt(
 const COMMAND_TIMEOUT_MS = resolveEnvInt(
   'REDIS_CACHE_COMMAND_TIMEOUT_MS',
   DEFAULT_COMMAND_TIMEOUT_MS,
+);
+const PING_TIMEOUT_MS = resolveEnvInt(
+  'REDIS_CACHE_PING_TIMEOUT_MS',
+  DEFAULT_PING_TIMEOUT_MS,
 );
 
 // ─── Prometheus Metrics ───────────────────────────────────────────────────────
@@ -315,6 +321,35 @@ class RedisCacheClient {
   }
 
   /**
+   * Ping the Redis server with a bounded timeout.
+   * Returns `'PONG'` on success, or `null` when Redis is unavailable,
+   * not configured, or the ping exceeds `PING_TIMEOUT_MS`.
+   *
+   * Used by the /ready health check so a dead cache cannot keep the pod
+   * in the k8s Service endpoints list.
+   */
+  async pingWithTimeout(timeoutMs: number = PING_TIMEOUT_MS): Promise<string | null> {
+    if (!this._isReady || !this.client) return null;
+
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const timeout = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+        if (typeof timer.unref === 'function') timer.unref();
+      });
+      const result = await Promise.race([
+        this.client.ping().catch(() => null),
+        timeout,
+      ]);
+      return result;
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
    * Gracefully close the Redis connection.
    * Called during graceful shutdown.
    */
@@ -442,4 +477,29 @@ export async function getRedisCacheHealth(): Promise<'up' | 'degraded'> {
 
   const pong = await redisCacheClient.ping();
   return pong === 'PONG' ? 'up' : 'degraded';
+}
+
+/**
+ * Detailed Redis health for the /ready endpoint.
+ *
+ * - When REDIS_URL is not set, returns `{ status: 'up', optional: true }` so
+ *   the pod is considered ready (in-memory LRU is the sole, always-available
+ *   store).
+ * - When REDIS_URL is set, performs a bounded PING. Returns `{ status: 'up' }`
+ *   on PONG, otherwise `{ status: 'down' }` with the failure reason.
+ */
+export async function getRedisReadyCheck(): Promise<{
+  status: 'up' | 'down';
+  optional?: boolean;
+  reason?: string;
+}> {
+  if (!redisCacheClient.isConfigured) {
+    return { status: 'up', optional: true };
+  }
+
+  const pong = await redisCacheClient.pingWithTimeout(PING_TIMEOUT_MS);
+  if (pong === 'PONG') {
+    return { status: 'up' };
+  }
+  return { status: 'down', reason: 'redis ping failed or timed out' };
 }
