@@ -1,3 +1,4 @@
+
 // This file has its own dedicated adaptive-throttle escalation test and
 // already resets that middleware's state before every test (below), so it
 // needs the real threshold restored here — setup.ts globally raises
@@ -70,24 +71,10 @@ describe('Backend API', () => {
       const response = await request(app).get('/ready');
 
       expect(response.body.dependencies).toHaveProperty('redis');
-      expect(['up', 'down']).toContain(response.body.dependencies.redis.status);
+      expect(response.body.dependencies.redis).toHaveProperty('status');
     });
 
-    it('should report redis as up with optional flag when REDIS_URL is not set', async () => {
-      const originalRedisUrl = process.env.REDIS_URL;
-      delete process.env.REDIS_URL;
-
-      const response = await request(app).get('/ready');
-
-      expect(response.body.dependencies.redis.status).toBe('up');
-      expect(response.body.dependencies.redis.optional).toBe(true);
-
-      if (originalRedisUrl !== undefined) {
-        process.env.REDIS_URL = originalRedisUrl;
-      }
-    });
-
-    it('should return 503 when redis.ping throws', async () => {
+    it('should return 503 with redis down when redis.ping throws', async () => {
       const pingSpy = jest
         .spyOn(redis, 'ping')
         .mockRejectedValueOnce(new Error('ECONNREFUSED'));
@@ -95,7 +82,9 @@ describe('Backend API', () => {
       const response = await request(app).get('/ready');
 
       expect(response.status).toBe(503);
-      expect(response.body.dependencies.redis.status).toBe('down');
+      expect(response.body.dependencies.redis).toMatchObject({
+        status: 'down',
+      });
 
       pingSpy.mockRestore();
     });

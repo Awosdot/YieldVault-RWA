@@ -315,9 +315,9 @@ class RedisCacheClient {
   }
 
   /**
-   * Ping the Redis server with a hard timeout.
-   * Returns 'PONG' when Redis responds in time, otherwise null.
-   * Used by the /ready health check to avoid blocking on a dead cache.
+   * Ping the Redis server with a bounded timeout.
+   * Returns 'PONG' on success, or null when Redis is unavailable, not
+   * configured, or the ping exceeds `timeoutMs`.
    */
   async pingWithTimeout(timeoutMs: number): Promise<string | null> {
     if (!this._isReady || !this.client) return null;
@@ -464,23 +464,22 @@ export async function getRedisCacheHealth(): Promise<'up' | 'degraded'> {
 }
 
 /**
- * Detailed Redis health status for the /ready endpoint.
+ * Detailed health descriptor for the Redis cache layer, suitable for the
+ * `/ready` endpoint's `checks` object.
  *
- * - When REDIS_URL is not set, reports `{ status: 'up', optional: true }`
- *   because the in-memory LRU fallback is always available.
- * - When REDIS_URL is set and PING succeeds within the timeout, reports
- *   `{ status: 'up' }`.
- * - When REDIS_URL is set but PING fails or times out, reports
- *   `{ status: 'down' }` so k8s can stop routing traffic to the pod.
+ * - When REDIS_URL is not set, reports `{ status: 'up', optional: true }`.
+ * - When REDIS_URL is set and PING succeeds within 500ms, reports `{ status: 'up' }`.
+ * - When REDIS_URL is set but PING fails or times out, reports `{ status: 'down' }`.
  */
-export async function getRedisReadyCheck(
-  timeoutMs: number = 500,
-): Promise<{ status: 'up' | 'down'; optional?: boolean }> {
+export async function getRedisCacheHealthDetail(): Promise<{
+  status: 'up' | 'down';
+  optional?: boolean;
+}> {
   if (!redisCacheClient.isConfigured) {
     return { status: 'up', optional: true };
   }
 
-  const pong = await redisCacheClient.pingWithTimeout(timeoutMs);
+  const pong = await redisCacheClient.pingWithTimeout(500);
   if (pong === 'PONG') {
     return { status: 'up' };
   }
