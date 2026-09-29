@@ -315,21 +315,25 @@ class RedisCacheClient {
   }
 
   /**
-   * Ping the Redis server with a bounded timeout.
-   * Returns 'PONG' on success, or null when Redis is unavailable, not
-   * configured, or the ping exceeds `timeoutMs`.
+   * Ping the Redis server with a hard timeout.
+   * Returns 'PONG' when Redis responds in time, otherwise null.
+   * Used by the /ready health check to fail fast when Redis is unreachable.
    */
   async pingWithTimeout(timeoutMs: number): Promise<string | null> {
-    if (!this._isReady || !this.client) return null;
+    if (!this.client) return null;
 
+    let timer: NodeJS.Timeout | undefined;
     try {
-      const result = await Promise.race([
-        this.client.ping(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
-      ]);
+      const pingPromise = this.client.ping();
+      const timeoutPromise = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      });
+      const result = await Promise.race([pingPromise, timeoutPromise]);
       return result;
     } catch {
       return null;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -464,25 +468,23 @@ export async function getRedisCacheHealth(): Promise<'up' | 'degraded'> {
 }
 
 /**
- * Detailed health descriptor for the Redis cache layer, suitable for the
- * `/ready` endpoint's `checks` object.
+ * Health check for the Redis cache layer, suitable for the /ready endpoint.
  *
- * - When REDIS_URL is not set, reports `{ status: 'up', optional: true }`.
- * - When REDIS_URL is set and PING succeeds within 500ms, reports `{ status: 'up' }`.
- * - When REDIS_URL is set but PING fails or times out, reports `{ status: 'down' }`.
+ * Returns an object describing the Redis check:
+ *   - When REDIS_URL is not configured: { status: 'up', optional: true }
+ *   - When Redis responds to PING within the timeout: { status: 'up' }
+ *   - When Redis is configured but unreachable / times out:
+ *       { status: 'down' }
+ *
+ * The default timeout is 500ms per the /ready acceptance criteria.
  */
-export async function getRedisCacheHealthDetail(): Promise<{
-  status: 'up' | 'down';
-  optional?: boolean;
-}> {
+export async function getRedisReadyCheck(
+  timeoutMs: number = 500,
+): Promise<{ status: 'up' | 'down'; optional?: boolean }> {
   if (!redisCacheClient.isConfigured) {
     return { status: 'up', optional: true };
   }
 
-  const pong = await redisCacheClient.pingWithTimeout(500);
-  if (pong === 'PONG') {
-    return { status: 'up' };
-  }
-
-  return { status: 'down' };
+  const pong = await redisCacheClient.pingWithTimeout(timeoutMs);
+  return pong === 'PONG' ? { status: 'up' } : { status: 'down' };
 }

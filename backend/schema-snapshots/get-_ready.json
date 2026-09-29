@@ -37,6 +37,12 @@
             },
             "optional": {
               "type": "boolean"
+            },
+            "latencyMs": {
+              "type": "number"
+            },
+            "error": {
+              "type": "string"
             }
           },
           "required": [

@@ -1,4 +1,3 @@
-
 // This file has its own dedicated adaptive-throttle escalation test and
 // already resets that middleware's state before every test (below), so it
 // needs the real threshold restored here — setup.ts globally raises
@@ -74,7 +73,7 @@ describe('Backend API', () => {
       expect(response.body.dependencies.redis).toHaveProperty('status');
     });
 
-    it('should return 503 with redis down when redis.ping throws', async () => {
+    it('should return 503 when redis.ping throws', async () => {
       const pingSpy = jest
         .spyOn(redis, 'ping')
         .mockRejectedValueOnce(new Error('ECONNREFUSED'));
@@ -82,9 +81,8 @@ describe('Backend API', () => {
       const response = await request(app).get('/ready');
 
       expect(response.status).toBe(503);
-      expect(response.body.dependencies.redis).toMatchObject({
-        status: 'down',
-      });
+      expect(response.body.checks).toHaveProperty('redis');
+      expect(response.body.checks.redis).toMatchObject({ status: 'down' });
 
       pingSpy.mockRestore();
     });
