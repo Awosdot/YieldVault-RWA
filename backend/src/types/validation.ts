@@ -26,7 +26,10 @@ export const PaginationQuerySchema = z
   .object({
     limit: z.string().regex(/^\d+$/, 'limit must be a positive integer').optional(),
     cursor: z.string().optional(),
-    page: z.string().regex(/^\d+$/, 'page must be a positive integer').optional(),
+    // Signed so an out-of-range page (`page=-1`, `page=1000000`) reaches
+    // `parsePaginationQuery`, which clamps it into `1..maxPage`, instead of
+    // being rejected outright (Issue #1430).
+    page: z.string().regex(/^-?\d+$/, 'page must be an integer').optional(),
     sortBy: z.string().optional(),
     sortOrder: z.string().optional(),
     dryRun: z.enum(['true', 'false', '1', '0']).optional(),

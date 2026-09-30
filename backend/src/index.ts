@@ -103,6 +103,7 @@ import { createVersionDiscoveryRouter } from './routes/apiVersions';
 import { GracefulShutdownHandler } from './gracefulShutdown';
 import { db } from './database';
 import vaultRouter from './vaultEndpoints';
+import vaultsListRouter from './routes/vaults';
 import walletAliasRouter from './walletAliasEndpoints';
 import { walletAliasMappingService } from './walletAliasService';
 import transactionRouter from './transactionEndpoints';
@@ -911,6 +912,7 @@ app.use('/api', createVersionDiscoveryRouter());
 
 // Mount routers under /api/v1
 apiV1.use('/vault', vaultRouter);
+apiV1.use('/vaults', vaultsListRouter);
 apiV1.use('/wallet-aliases', walletAliasRouter);
 apiV1.use('/referrals', referralRouter);
 apiV1.use('/transactions', transactionRouter);
