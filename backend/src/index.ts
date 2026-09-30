@@ -256,6 +256,11 @@ const cacheVaultMetricsTtl = parseInt(process.env.CACHE_TTL_MS || process.env.CA
 // Configure logger
 logger.configure(logLevel);
 
+// Coordinates SIGTERM/SIGINT: stops new requests immediately, drains
+// in-flight ones, then runs DB/job cleanup — see onShutdown registrations
+// near the bottom of this file.
+const shutdownHandler = new GracefulShutdownHandler(drainTimeout);
+
 void walletAliasMappingService.loadFromDatabase().catch((error) => {
   logger.log('error', 'Failed to warm wallet alias cache', {
     error: error instanceof Error ? error.message : String(error),
@@ -714,6 +719,25 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     }
   });
 
+  next();
+});
+
+// ─── Shutdown Gate ───────────────────────────────────────────────────────────
+// Once SIGTERM/SIGINT starts a drain, reject new requests with 503 instead of
+// routing them — the health check stays exempt so liveness probes keep seeing
+// 200 until the process actually exits.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (shutdownHandler.isShuttingDown() && req.path !== '/health') {
+    res.set('Retry-After', '10');
+    res.status(503).json({
+      error: 'Service Unavailable',
+      status: 503,
+      code: 'SHUTTING_DOWN',
+      message: 'Server is shutting down and not accepting new requests',
+      retryable: true,
+    });
+    return;
+  }
   next();
 });
 
@@ -4794,6 +4818,12 @@ if (process.env.NODE_ENV !== 'test' && process.env.VAULT_CONTRACT_ID) {
     pollIntervalMs: parseInt(process.env.EVENT_POLL_INTERVAL_MS || '10000', 10),
     batchSize: parseInt(process.env.EVENT_REPLAY_BATCH_SIZE || '100', 10),
   });
+
+  // stopEventPollingService() is a no-op if the service was never started,
+  // so this is safe to register unconditionally alongside the block above.
+  shutdownHandler.onShutdown(async () => {
+    stopEventPollingService();
+  });
 }
 
 // â”€â”€â”€ Outbox Pattern Processor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4810,10 +4840,10 @@ if (process.env.NODE_ENV !== 'test') {
 
   // Register graceful shutdown for the outbox processor so pending events
   // are not abandoned when the process receives a termination signal.
-  process.on('SIGTERM', () => {
-    eventOutboxService.stop();
-  });
-  process.on('SIGINT', () => {
+  // Runs only after in-flight HTTP requests have drained (see
+  // GracefulShutdownHandler), so it can't race a request still writing to
+  // the outbox.
+  shutdownHandler.onShutdown(async () => {
     eventOutboxService.stop();
   });
 }
@@ -5409,4 +5439,25 @@ app.use((req: Request, res: Response) => {
   });
 });
 
+// â”€â”€â”€ Server Startup & Graceful Shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Tests import `app` directly via supertest and never bind a real port.
+if (process.env.NODE_ENV !== 'test') {
+  // Disconnect Prisma last, after the HTTP listener has finished draining
+  // in-flight requests (see GracefulShutdownHandler) — this is what stops a
+  // termination signal from severing an open prisma.vault.update transaction
+  // mid-commit and leaving a row locked for the next deploy's migration.
+  shutdownHandler.onShutdown(async () => {
+    await prisma.$disconnect();
+  });
+
+  const server = app.listen(port, () => {
+    logger.log('info', `Server listening on port ${port}`);
+  });
+  shutdownHandler.register(server);
+}
+
+// Exported for tests: lets the shutdown-gate middleware behavior be verified
+// without sending a real process signal (which would also tear down other
+// suites' background jobs sharing this module in the Jest worker).
+export { shutdownHandler };
 export default app;
