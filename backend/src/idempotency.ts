@@ -26,6 +26,22 @@ import { prisma } from './prisma';
 import { logger } from './middleware/structuredLogging';
 import type { Request, Response, NextFunction } from 'express';
 
+/**
+ * The replay cache used by money-moving operations (deposits, withdrawals,
+ * transfers) lives in `idempotencyStore.ts`; it is re-exported here so callers
+ * keep a single import surface for the whole idempotency feature.
+ */
+export {
+  idempotencyStore,
+  IdempotencyStore,
+  IdempotencyConflictError,
+  buildIdempotencyFingerprint,
+  getIdempotencyHashThreshold,
+  type IdempotentOperationResult,
+  type IdempotencyKeyInfo,
+  type IdempotencyMetrics,
+} from './idempotencyStore';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface IdempotencyRecord {

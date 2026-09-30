@@ -3,7 +3,7 @@ import { emailService } from './emailService';
 import { logger } from './middleware/structuredLogging';
 import { allowlistMiddleware } from './middleware/allowlist';
 import { triggerCacheInvalidation, registerInvalidationHook } from './middleware/cache';
-import { depositsLimiter, depositsUserLimiter } from './rateLimiter';
+import { depositsLimiter, depositsUserLimiter, readsLimiter } from './rateLimiter';
 import { cacheMiddleware } from './middleware/cache';
 import {
   idempotencyStore,
@@ -769,7 +769,7 @@ router.post('/strategy', depositsLimiter, requireFlag('strategy-selection'), val
     });
   });
 
-  res.status(200).json({ message: 'Strategy selection endpoint (v2 preview)' });
+  return res.status(200).json({ message: 'Strategy selection endpoint (v2 preview)' });
 });
 
 /**
@@ -900,7 +900,7 @@ router.get('/receipts', readsLimiter, async (req: Request, res: Response) => {
 
   const transactions = await prisma.transaction.findMany({
     where,
-    orderBy: { createdAt: 'desc' },
+    orderBy: { timestamp: 'desc' },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
@@ -916,7 +916,7 @@ router.get('/receipts', readsLimiter, async (req: Request, res: Response) => {
     status: tx.status,
     walletAddress: tx.user,
     explorerUrl: `${EXPLORER_BASE_URL}/${tx.id}`,
-    timestamp: tx.createdAt.toISOString(),
+    timestamp: tx.timestamp.toISOString(),
   }));
 
   res.status(200).json({

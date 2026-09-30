@@ -50,6 +50,9 @@ model Transaction {
   tenantId      String?
   latencyMs     Int?
   failureReason String?
+  // Soft-delete marker used by the tenant boundary guard so revoked rows are
+  // never returned to a tenant-scoped read.
+  deletedAt     DateTime?
   timestamp     DateTime @default(now())
 
   // Issue #895 – query optimisation indices
@@ -61,6 +64,8 @@ model Transaction {
   @@index([user, type, timestamp(sort: Desc)])
   @@index([user, status, timestamp(sort: Desc)])
   @@index([vaultId, tenantId, timestamp(sort: Desc)])
+  @@index([tenantId])
+  @@index([deletedAt])
 }
 
 model Referral {
@@ -221,6 +226,8 @@ model WebhookEndpoint {
   challengeExpiresAt    DateTime?
   verifiedAt            DateTime?
   lastVerificationError String?
+  // Owning tenant, used by the tenant boundary guard for cross-account reads.
+  tenantId              String?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
   deletedAt             DateTime?
@@ -231,6 +238,7 @@ model WebhookEndpoint {
   @@index([createdAt])
   @@index([deletedAt])
   @@index([verificationStatus])
+  @@index([tenantId])
 }
 
 model WebhookDelivery {
@@ -675,6 +683,8 @@ model WalletTenantAssociation {
 
   @@index([walletAddress, tenantId])
   @@index([tenantId])
+}
+
 model IdempotencyKey {
   id            String    @id @default(uuid())
   keyId         String
@@ -692,4 +702,28 @@ model IdempotencyKey {
 
   @@unique([keyId, tenantId])
   @@index([expiresAt])
+}
+
+// ─── Session Audit ────────────────────────────────────────────────────────────
+
+/// Append-only trail of session lifecycle events (login, refresh, logout,
+/// expiry) written by `sessionAudit.ts`. Powers incident investigation and
+/// the anomaly heuristics in `detectSuspiciousActivity`.
+model SessionAuditLog {
+  id            String   @id @default(uuid())
+  walletAddress String
+  eventType     String // created | refreshed | revoked | expired | failed
+  reason        String // user_logout | token_rotation | token_expiration | ...
+  sessionId     String
+  ipAddress     String?
+  userAgent     String?
+  /// JSON-serialised context attached to the event.
+  metadata      String?
+  correlationId String?
+  traceId       String?
+  timestamp     DateTime @default(now())
+
+  @@index([walletAddress, timestamp(sort: Desc)])
+  @@index([eventType])
+  @@index([timestamp(sort: Desc)])
 }

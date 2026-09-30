@@ -5404,6 +5404,7 @@ app.use((req: Request, res: Response) => {
     status: 404,
     code: 'ROUTE_NOT_FOUND',
     message: `Cannot ${req.method} ${req.originalUrl}`,
+    path: req.originalUrl,
     details: { path: req.originalUrl },
     retryable: false,
   });
