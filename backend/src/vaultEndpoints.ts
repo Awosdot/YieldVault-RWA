@@ -3,7 +3,7 @@ import { emailService } from './emailService';
 import { logger } from './middleware/structuredLogging';
 import { allowlistMiddleware } from './middleware/allowlist';
 import { triggerCacheInvalidation, registerInvalidationHook } from './middleware/cache';
-import { depositsLimiter, depositsUserLimiter } from './rateLimiter';
+import { depositsLimiter, depositsUserLimiter, readsLimiter } from './rateLimiter';
 import { cacheMiddleware } from './middleware/cache';
 import {
   idempotencyStore,
