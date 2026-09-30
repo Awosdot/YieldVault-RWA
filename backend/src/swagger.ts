@@ -6,6 +6,7 @@ import {
   MAX_PAGE as VAULT_LIST_MAX_PAGE,
   MAX_PAGE_SIZE as VAULT_LIST_MAX_LIMIT,
 } from './middleware/paginationGuard';
+import { CLOCK_SKEW_TOLERANCE_SECONDS } from './auth';
 
 const VAULT_LIST_DEFAULT_LIMIT = DEFAULT_PAGE_SIZE;
 
@@ -59,7 +60,14 @@ const options: swaggerJsdoc.Options = {
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'JWT',
-          description: 'JWT issued by POST /auth/login or POST /auth/refresh.',
+          description:
+            'JWT issued by POST /auth/login or POST /auth/refresh. ' +
+            '`exp` is enforced with **zero** clock tolerance — a token is rejected the ' +
+            'moment it expires. Only `nbf`/`iat` get a ' +
+            `${CLOCK_SKEW_TOLERANCE_SECONDS}s tolerance for clock skew. ` +
+            'The revocation list is checked on every authenticated request, so a token ' +
+            'presented after `POST /auth/logout` (401 `TOKEN_REVOKED`) or after ' +
+            '`POST /auth/logout-all` is refused immediately rather than at expiry.',
         },
         apiKeyAuth: {
           type: 'apiKey',

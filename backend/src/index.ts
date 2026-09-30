@@ -10,7 +10,17 @@ initTracing();
 
 import express, { Express, Request, Response, NextFunction, ErrorRequestHandler } from 'express';
 import NodeCache from 'node-cache';
-import { loginHandler, nonceHandler, refreshHandler, requireAuth, verifyJwt } from './auth';
+import {
+  loginHandler,
+  nonceHandler,
+  refreshHandler,
+  requireAuth,
+  verifyJwt,
+  revokeAccessToken,
+  revokeAllAccessTokens,
+  revokeCurrentSession,
+  revokeAllSessions,
+} from './auth';
 import {
   authLimiter,
   authIpLimiter,
@@ -981,16 +991,42 @@ app.use('/admin', validateApiKey, adminRbacMiddleware);
 
 /**
  * POST /api/v1/auth/logout
- * Revokes the current session. Requires Bearer token.
+ *
+ * Revokes the presented access token (`jti`) on the revocation list, so the
+ * very next request with it is rejected 401 `TOKEN_REVOKED` (Issue #1431).
+ * When a `refreshToken` is also supplied the whole refresh family is revoked,
+ * so the session cannot be resurrected by rotation.
  */
-apiV1.post('/auth/logout', readsLimiter, requireAuth, (req: Request, res: Response) => {
+apiV1.post('/auth/logout', readsLimiter, requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as import('./auth').AuthenticatedRequest;
+  const payload = authReq.jwtPayload;
+  const walletAddress = payload?.sub;
+
+  if (!payload || !walletAddress) {
+    res.status(500).json({
+      error: 'Internal Server Error',
+      status: 500,
+      message: 'Unable to determine authenticated wallet',
+    });
+    return;
+  }
+
   try {
-    const authReq = req as import('./auth').AuthenticatedRequest;
-    const walletAddress = authReq.jwtPayload?.sub;
-    if (!walletAddress) throw new Error('Unable to determine authenticated wallet');
+    await revokeAccessToken(payload, 'logout');
+
+    const refreshToken =
+      typeof (req.body as { refreshToken?: unknown } | undefined)?.refreshToken === 'string'
+        ? ((req.body as { refreshToken: string }).refreshToken)
+        : undefined;
+    if (refreshToken) {
+      await revokeCurrentSession(refreshToken);
+    }
+
     res.status(200).json({
       message: 'Session revoked successfully',
-      walletAddress: walletAddress.slice(0, 8) + 'â€¦',
+      walletAddress: walletAddress.slice(0, 8) + '…',
+      revokedAccessToken: true,
+      refreshSessionRevoked: Boolean(refreshToken),
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -1004,17 +1040,34 @@ apiV1.post('/auth/logout', readsLimiter, requireAuth, (req: Request, res: Respon
 
 /**
  * POST /api/v1/auth/logout-all
- * Revokes all active sessions for the authenticated wallet.
+ *
+ * Revokes every access token currently issued to the wallet by writing a
+ * wallet-wide high-water mark, so tokens minted before now stop working even
+ * though we hold no list of them (Issue #1431). Also revokes all refresh
+ * families for the wallet.
  */
-apiV1.post('/auth/logout-all', readsLimiter, requireAuth, (req: Request, res: Response) => {
+apiV1.post('/auth/logout-all', readsLimiter, requireAuth, async (req: Request, res: Response) => {
+  const authReq = req as import('./auth').AuthenticatedRequest;
+  const walletAddress = authReq.jwtPayload?.sub;
+
+  if (!walletAddress) {
+    res.status(500).json({
+      error: 'Internal Server Error',
+      status: 500,
+      message: 'Unable to determine authenticated wallet',
+    });
+    return;
+  }
+
   try {
-    const authReq = req as import('./auth').AuthenticatedRequest;
-    const walletAddress = authReq.jwtPayload?.sub;
-    if (!walletAddress) throw new Error('Unable to determine authenticated wallet');
+    const revokedAccessTokens = await revokeAllAccessTokens(walletAddress, 'logout');
+    const revokedRefreshTokens = await revokeAllSessions(walletAddress);
+
     res.status(200).json({
       message: 'All sessions revoked successfully',
-      walletAddress: walletAddress.slice(0, 8) + 'â€¦',
-      revokedCount: 1,
+      walletAddress: walletAddress.slice(0, 8) + '…',
+      revokedCount: revokedRefreshTokens,
+      revokedAccessTokens,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
