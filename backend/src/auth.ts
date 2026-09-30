@@ -541,9 +541,11 @@ export async function isAccessTokenRevoked(payload: JwtPayload): Promise<boolean
     return true;
   }
 
-  // `iat` is unix seconds; the wallet marker uses unix milliseconds.
+  // `iat` is unix seconds; the wallet marker uses unix milliseconds. The
+  // wallet is normalised on both sides so a lower-case `sub` cannot dodge a
+  // revocation written for the canonical (upper-case) address.
   if (typeof payload.iat === 'number' && Number.isFinite(payload.iat)) {
-    return store.isWalletRevokedBefore(payload.sub, payload.iat * 1000);
+    return store.isWalletRevokedBefore(normalizeWalletAddress(payload.sub), payload.iat * 1000);
   }
 
   return false;
@@ -742,9 +744,11 @@ export function requireAuth(
     return;
   }
 
-  // Revocation lookup is async, so the remainder of the middleware chain runs
-  // from a continuation. `res.headersSent` guards the (unexpected) case of a
-  // downstream middleware having already replied before we get here.
+  // The revocation lookup is async, so the rest of the chain runs from a
+  // continuation. Express ignores middleware return values, so returning
+  // before `next()` is safe for route usage; the single direct caller
+  // (authenticateTransactionExport) passes a synchronous next() and is
+  // unaffected.
   isAccessTokenRevoked(payload).then(
     (revoked) => {
       if (revoked) {
