@@ -4806,16 +4806,18 @@ if (process.env.NODE_ENV !== 'test') {
       error: err instanceof Error ? err.message : String(err),
     });
   });
-  eventOutboxService.start();
+  const shutdownController = new AbortController();
+  const shutdownSignal = shutdownController.signal;
+  eventOutboxService.start({ signal: shutdownSignal });
 
-  // Register graceful shutdown for the outbox processor so pending events
-  // are not abandoned when the process receives a termination signal.
-  process.on('SIGTERM', () => {
-    eventOutboxService.stop();
-  });
-  process.on('SIGINT', () => {
-    eventOutboxService.stop();
-  });
+  // Register graceful shutdown for the outbox processor: abort in-flight work
+  // and wait for the poller to drain before the process tears down resources.
+  const stopOutbox = () => {
+    shutdownController.abort();
+    void eventOutboxService.stop();
+  };
+  process.on('SIGTERM', stopOutbox);
+  process.on('SIGINT', stopOutbox);
 }
 
 
