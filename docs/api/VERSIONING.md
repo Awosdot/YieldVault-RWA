@@ -52,8 +52,14 @@ URL versioning was chosen because:
 - Proxies, CDNs, and caches route on the path without special configuration.
 - Testing in a browser or with `curl` requires no extra headers.
 
-**Header-based versioning** (`Accept: application/vnd.yieldvault.v2+json`) is not
-currently supported. Custom `X-API-Version` request headers are also ignored.
+**Header-based versioning** is also supported for negotiation. Clients may send
+`X-API-Version`, `Accept-Version`, or `Accept: application/json;version=1.0.0`.
+The path prefix remains the canonical routing mechanism; headers pin the
+contract within a prefix and reject unknown versions with `406 Not Acceptable`.
+
+Version routing middleware (`backend/src/middleware/versionRouting.ts`) reads
+`/api/v1` and `/api/v2` prefixes, sets `req.apiVersion`, and advertises
+`X-API-Version-Path`. Discovery is available at `GET /api/versions`.
 
 ---
 
@@ -62,8 +68,12 @@ currently supported. Custom `X-API-Version` request headers are also ignored.
 | Version | Status | Base path | Introduced | End-of-life |
 |---------|--------|-----------|------------|-------------|
 | **v1** | **Active** (current) | `/api/v1` | 2026-03-28 | TBD |
+| **v2** | **Preview** (breaking-change preview) | `/api/v2` | 2026-08-25 | TBD |
 
-Only one version is active at a time. New integrations must use the `v1` base path.
+New production integrations must use the `v1` base path. `v2` is available as a
+preview for endpoints that are being reshaped before the next major API release.
+Preview responses include `X-API-Preview: v2` and may change before v2 becomes
+active.
 
 **Unversioned paths** (e.g., `/api/vault/summary`, `/auth/login`) are a legacy
 transition layer that **redirects 301** to the `v1` equivalents. They are
@@ -74,11 +84,12 @@ window closes (see [§ 6](#6-backward-compatibility-redirects)).
 
 ## 3. How versions are communicated
 
-Every response from the versioned API includes an `X-API-Version` response header
-indicating the version that handled the request:
+Every response from the API includes an `X-API-Version` response header
+indicating the version contract that handled the request:
 
 ```
-X-API-Version: v1
+X-API-Version: 1.0.0
+X-API-Version-Supported: 1.0.0, 2.0.0-preview
 ```
 
 This header is always present on `2xx`, `4xx`, and `5xx` responses. It is absent
@@ -87,6 +98,28 @@ that never reach the application server.
 
 Integrators should log this header alongside `X-Correlation-ID` to aid in
 debugging cross-version issues during migration periods.
+
+Clients can pin a version with `X-API-Version`, `Accept-Version`, or an
+`Accept` media type parameter such as `application/json;version=1.0.0`. The
+server accepts `1`, `v1`, `1.0.0`, and compatible `1.x` values for stable v1.
+It accepts `2`, `v2`, `2.0.0`, and `2.0.0-preview` for the v2 preview. Unknown
+versions return `406 Not Acceptable` with the supported version list.
+
+The first v2 preview route is:
+
+```
+GET /api/v2/vaults/:id/health
+```
+
+It currently redirects with `307` to the stable v1 health handler:
+
+```
+GET /api/v1/vaults/:id/health
+```
+
+That v1 handler returns vault status, process uptime, dependency health, vault
+summary metrics, and a `cached` flag. Responses are cached for five seconds and
+use the read-tier rate limiter so monitoring systems can poll it safely.
 
 ---
 
@@ -453,4 +486,5 @@ for the contract upgrade process.
 
 | Date | Change |
 |------|--------|
+| 2026-08-26 | Documented path routing middleware, `/api/versions` discovery, and header negotiation (#1284) |
 | 2026-06-27 | Initial versioning and deprecation policy for Issue #610 |

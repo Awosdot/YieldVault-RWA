@@ -2,6 +2,10 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import * as Sentry from "@sentry/react";
 import Navbar from "./components/Navbar";
+import SkipLinks from "./components/SkipLinks";
+import RouteAnnouncer from "./components/RouteAnnouncer";
+import MotionProvider from "./motion/MotionProvider";
+import PageTransition from "./motion/PageTransition";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import SessionExpiryWarning from "./components/SessionExpiryWarning";
 import WalletDisconnectRecoveryModal from "./components/WalletDisconnectRecoveryModal";
@@ -19,6 +23,11 @@ import { useUsdcBalance, useXlmBalance } from "./hooks/useBalanceData";
 import { queryClient } from "./lib/queryClient";
 import { clearWalletSessionState } from "./lib/sessionCleanup";
 import {
+  clearPersistedWalletAddress,
+  getPersistedWalletAddress,
+  setPersistedWalletAddress,
+} from "./lib/walletSession";
+import {
   clearVaultFormDraft,
   hasMeaningfulDraft,
   loadVaultFormDraft,
@@ -26,7 +35,9 @@ import {
 } from "./lib/formDraftStorage";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ErrorFallback from "./components/ErrorFallback";
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
 import RouteLoadingFallback from "./components/RouteLoadingFallback";
+import { captureException } from "./config/sentry";
 import {
   LazyAnalytics,
   LazyHome,
@@ -40,6 +51,7 @@ import {
 import NetworkWarningBanner from "./components/NetworkWarningBanner";
 import OfflineBanner from "./components/OfflineBanner";
 import HighLatencyBanner from "./components/HighLatencyBanner";
+import NetworkBanner from "./components/NetworkBanner";
 import { useVault, VaultProvider } from "./context/VaultContext";
 import { usePageViewTracking } from "./hooks/useAnalytics";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -49,12 +61,17 @@ import { useRestoreGuardedRoute } from "./hooks/useRestoreGuardedRoute";
 const SentryRoutes = Sentry.withSentryReactRouterV6Routing(Routes);
 
 const TransactionReceipt = lazy(() => import("./pages/TransactionReceipt"));
+const StrategyDetail = lazy(() => import("./pages/StrategyDetail"));
 const Admin = lazy(() => import("./pages/Admin"));
+const VaultHealthDashboard = lazy(() => import("./pages/VaultHealthDashboard"));
+const AuditLog = lazy(() => import("./pages/AuditLog"));
 
 // Removed simple fallback in favor of components/ErrorFallback
 
 function AppContent() {
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(() =>
+    getPersistedWalletAddress(),
+  );
   const [pendingDraft, setPendingDraft] = useState<VaultFormDraft | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
@@ -94,6 +111,7 @@ function AppContent() {
   const handleConnect = useCallback((address: string) => {
     renewSession();
     clearSessionExpired();
+    setPersistedWalletAddress(address);
     setWalletAddress(address);
     setPendingDraft(null);
   }, [renewSession, clearSessionExpired]);
@@ -119,6 +137,7 @@ function AppContent() {
     }
 
     clearWalletSessionState(queryClient);
+    clearPersistedWalletAddress();
     setWalletAddress(null);
     navigate("/", { replace: true });
   }, [clearSessionExpired, location.pathname, navigate, setSessionExpired]);
@@ -148,13 +167,14 @@ function AppContent() {
   return (
     <PreferencesProvider walletAddress={walletAddress}>
       <KeyboardShortcutProvider walletAddress={walletAddress}>
-        <a className="skip-link" href="#main-content">
-          Skip to main content
-        </a>
+        <MotionProvider>
+        <SkipLinks />
+        <RouteAnnouncer />
         <OfflineBanner lastKnownTvl={tvl} lastKnownBalance={usdcBalance} />
         <div className="app-container">
           <NetworkWarningBanner walletAddress={walletAddress} />
           <HighLatencyBanner />
+          <NetworkBanner />
           <Navbar
             walletAddress={walletAddress}
             usdcBalance={usdcBalance}
@@ -162,51 +182,136 @@ function AppContent() {
             onDisconnect={handleDisconnect}
             role={role}
           />
-          <main id="main-content" className="container app-main" style={{ marginTop: "100px", paddingBottom: "60px" }}>
+          <main id="main-content" className="container app-main" tabIndex={-1} style={{ marginTop: "100px", paddingBottom: "60px" }}>
+            <PageTransition>
             <Suspense fallback={<RouteLoadingFallback />}>
               <SentryRoutes>
                 <Route
                   path="/"
                   element={
-                    <LazyHome
-                      walletAddress={walletAddress}
-                      usdcBalance={usdcBalance}
-                      xlmBalance={xlmBalance}
-                    />
+                    <RouteErrorBoundary routeName="home">
+                      <LazyHome
+                        walletAddress={walletAddress}
+                        usdcBalance={usdcBalance}
+                        xlmBalance={xlmBalance}
+                      />
+                    </RouteErrorBoundary>
                   }
                 />
                 <Route
                   path="/portfolio"
                   element={
-                    <LazyPortfolio
-                      walletAddress={walletAddress}
-                    />
+                    <RouteErrorBoundary routeName="portfolio">
+                      <LazyPortfolio walletAddress={walletAddress} />
+                    </RouteErrorBoundary>
                   }
                 />
                 <Route
                   path="/analytics"
                   element={
-                    <FeatureGate flag="ANALYTICS_PAGE">
-                      <LazyAnalytics />
-                    </FeatureGate>
+                    <RouteErrorBoundary routeName="analytics">
+                      <FeatureGate flag="ANALYTICS_PAGE">
+                        <LazyAnalytics />
+                      </FeatureGate>
+                    </RouteErrorBoundary>
                   }
                 />
-                <Route path="/transactions" element={<LazyTransactionHistory walletAddress={walletAddress} />} />
-                <Route path="/compare" element={<LazyVaultComparison />} />
-                <Route path="/receipt/:txHash" element={<TransactionReceipt />} />
-                <Route path="/settings" element={<LazySettings />} />
-                <Route path="/ui-kit" element={<LazyUIPreview />} />
+                <Route path="/transactions" element={<ErrorBoundary><LazyTransactionHistory walletAddress={walletAddress} /></ErrorBoundary>} />
+                <Route path="/compare" element={<ErrorBoundary><LazyVaultComparison /></ErrorBoundary>} />
+                <Route path="/strategies/:strategyId" element={<ErrorBoundary><StrategyDetail walletAddress={walletAddress} /></ErrorBoundary>} />
+                <Route path="/receipt/:txHash" element={<ErrorBoundary><TransactionReceipt /></ErrorBoundary>} />
+                <Route path="/settings" element={<ErrorBoundary><LazySettings /></ErrorBoundary>} />
+                <Route path="/vault-health" element={<ErrorBoundary><VaultHealthDashboard /></ErrorBoundary>} />
+                <Route path="/audit-log" element={<ErrorBoundary><AuditLog /></ErrorBoundary>} />
+                <Route path="/ui-kit" element={<ErrorBoundary><LazyUIPreview /></ErrorBoundary>} />
                 <Route
                   path="/admin"
                   element={
                     <ProtectedRoute role={role} allow={["admin"]}>
-                      <Admin walletAddress={walletAddress} />
+                      <RouteErrorBoundary routeName="admin">
+                        <Admin walletAddress={walletAddress} />
+                      </RouteErrorBoundary>
                     </ProtectedRoute>
                   }
                 />
-                <Route path="*" element={<Navigate to="/" replace />} />
+                <Route
+                  path="/transactions"
+                  element={
+                    <RouteErrorBoundary routeName="transactions">
+                      <LazyTransactionHistory walletAddress={walletAddress} />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/compare"
+                  element={
+                    <RouteErrorBoundary routeName="vault-comparison">
+                      <LazyVaultComparison />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/strategies/:strategyId"
+                  element={
+                    <RouteErrorBoundary routeName="strategy-detail">
+                      <StrategyDetail walletAddress={walletAddress} />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/receipt/:txHash"
+                  element={
+                    <RouteErrorBoundary routeName="transaction-receipt">
+                      <TransactionReceipt />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/settings"
+                  element={
+                    <RouteErrorBoundary routeName="settings">
+                      <LazySettings />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/vault-health"
+                  element={
+                    <RouteErrorBoundary routeName="vault-health">
+                      <VaultHealthDashboard />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/audit-log"
+                  element={
+                    <RouteErrorBoundary routeName="audit-log">
+                      <AuditLog />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/ui-kit"
+                  element={
+                    <RouteErrorBoundary routeName="ui-preview">
+                      <LazyUIPreview />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute role={role} allow={["admin"]}>
+                      <RouteErrorBoundary routeName="admin">
+                        <Admin walletAddress={walletAddress} />
+                      </RouteErrorBoundary>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route path="*" element={<ErrorBoundary><Navigate to="/" replace /></ErrorBoundary>} />
               </SentryRoutes>
             </Suspense>
+            </PageTransition>
           </main>
           <OnboardingWalkthrough />
           <ShortcutHelpModal />
@@ -229,6 +334,7 @@ function AppContent() {
           )}
           <ToastCenter />
         </div>
+        </MotionProvider>
       </KeyboardShortcutProvider>
     </PreferencesProvider>
   );
@@ -245,7 +351,7 @@ function App() {
       )}
       showDialog={false}
     >
-      <ErrorBoundary>
+      <ErrorBoundary onError={(error) => captureException(error, { route: "app-root" })}>
         <AuthProvider>
           <FeatureFlagProvider>
             <VaultProvider>

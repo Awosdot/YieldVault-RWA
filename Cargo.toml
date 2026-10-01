@@ -4,7 +4,13 @@ members = [
     "contracts/vault",
     "contracts/mock-strategy",
     "contracts/share-price-math",
+    "contracts/bridge-compat",
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
 
 [workspace.dependencies]
 soroban-sdk = "22.0.0"

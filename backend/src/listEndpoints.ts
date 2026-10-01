@@ -37,6 +37,7 @@ import {
 } from './exportJobs';
 import { tenantGuard } from './middleware/tenantGuard';
 import { createTimeoutFor } from './middleware/timeoutMiddleware';
+import { validate, PaginationQuerySchema, TransactionListQuerySchema } from './middleware/validate';
 import { getPrismaClient } from './prismaClient';
 
 const router = Router();
@@ -158,7 +159,10 @@ export interface TransactionExportArtifact {
 
 // ─── Mock Data ──────────────────────────────────────────────────────────────
 
-const MOCK_WALLET_ADDRESS = 'G234567ABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQ';
+// Kept in sync with VALID_TEST_WALLET in src/__tests__/setup.ts — both must be
+// a real, checksum-valid Ed25519 public key (not just regex-shaped) since
+// some endpoints validate wallet addresses via StrKey.isValidEd25519PublicKey.
+const MOCK_WALLET_ADDRESS = 'GBF2VOZSQLF2BZRW6NIDETV2L3I6GHXZUEFSIESELEAGATV2FYTOHOHI';
 
 const MOCK_TRANSACTIONS: Transaction[] = Array.from({ length: 100 }, (_, i) => ({
   id: `tx-${i + 1}`,
@@ -736,6 +740,7 @@ router.get('/transactions',
     allowAdminBypass: true, 
     adminBypassPermission: Permission.ADMIN_READ 
   }),
+  validate({ query: TransactionListQuerySchema }),
   createTimeoutFor.read(),
   async (req: Request, res: Response) => {
   try {
@@ -878,7 +883,8 @@ router.get('/vault/transactions/export',
  *       200:
  *         description: List of holdings
  */
-router.get('/portfolio/holdings', 
+router.get('/portfolio/holdings',
+  validate({ query: PaginationQuerySchema }), 
   cacheMiddleware({ ttl: CACHE_TTL_MS }),
   tenantGuard({ 
     walletParamPath: 'query.walletAddress', 
@@ -927,7 +933,8 @@ router.get('/portfolio/holdings',
  *       200:
  *         description: Vault history points
  */
-router.get('/vault/history', 
+router.get('/vault/history',
+  validate({ query: PaginationQuerySchema }), 
   cacheMiddleware({ ttl: CACHE_TTL_MS }), 
   createTimeoutFor.read(), 
   (req: Request, res: Response) => {
@@ -991,7 +998,8 @@ router.get('/vault/history',
  *                 days: { type: integer }
  *                 count: { type: integer }
  */
-router.get('/vault/apy/history', 
+router.get('/vault/apy/history',
+  validate({ query: PaginationQuerySchema }), 
   cacheMiddleware({ ttl: parseInt(process.env.CACHE_TTL_MS || '60000', 10) }), 
   createTimeoutFor.read(), 
   async (req: Request, res: Response) => {

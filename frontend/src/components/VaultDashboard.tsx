@@ -14,19 +14,21 @@ import { useDelayedLoading } from "../hooks/useDelayedLoading";
 import { useVault } from "../context/VaultContext";
 import ApiStatusBanner from "./ApiStatusBanner";
 import SharePriceDisplay from "./SharePriceDisplay";
+import VaultPositionBalance from "./VaultPositionBalance";
 import VaultPerformanceChart from "./VaultPerformanceChart";
+import VaultDecisionSummary from "./VaultDecisionSummary";
 import { useToast } from "../context/ToastContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./Tabs";
 import { FormField } from "../forms";
-import { isApiError, isValidationError } from "../lib/api";
+import { isValidationError } from "../lib/api";
 import { useForm } from "../forms/useForm";
 import { validate, type ValidationSchema } from "../forms/validate";
 import { useDepositMutation, useWithdrawMutation } from "../hooks/useVaultMutations";
 import { useTokenAllowance } from "../hooks/useTokenAllowance";
 import { usePortfolioHoldings } from "../hooks/usePortfolioData";
-import { createDepositFormSchema, MIN_DEPOSIT_AMOUNT } from "../forms/schemas/depositFormSchema";
+import { createDepositFormSchema, MIN_DEPOSIT_AMOUNT, MAX_DEPOSIT_AMOUNT, USDC_DISPLAY_DECIMALS } from "../forms/schemas/depositFormSchema";
 import { createWithdrawFormSchema } from "../forms/schemas/withdrawFormSchema";
-import { mapServerError } from "../lib/errorMappers";
+import { mapServerError, mapTransactionError } from "../lib/errorMappers";
 import confetti from "canvas-confetti";
 import CopyButton from "./CopyButton";
 import { Button } from "./ui/Button";
@@ -53,6 +55,7 @@ import { saveVaultFormDraft, clearVaultFormDraft } from "../lib/formDraftStorage
 import { buildDepositSummary, buildWithdrawalSummary } from "../lib/transactionConfirmationBuilder";
 import TransactionConflictResolver from "./TransactionConflictResolver";
 import RiskSummaryCard, { type RiskAction } from "./RiskSummaryCard";
+import FeeUtilizationPanel from "./FeeUtilizationPanel";
 import {
   isTransactionConflict,
   type TransactionConflictDetails,
@@ -206,10 +209,12 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
     summary,
     error,
     isLoading,
+    summaryUnavailable,
     utilization,
     isCapWarning,
     isCapReached,
     lastUpdate,
+    strategySwitchCooldownRemaining,
     refresh,
   } = useVault();
   const { t } = useTranslation();
@@ -223,7 +228,7 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
   });
   const { isStale: statsIsStale, ageText: statsAgeText } = useStaleIndicator(lastUpdate);
 
-  const { data: portfolioHoldings } = usePortfolioHoldings(walletAddress);
+  const { data: portfolioHoldings, isLoading: isPortfolioLoading } = usePortfolioHoldings(walletAddress);
 
   // Deposit balance comes from the connected wallet's USDC balance; withdraw
   // balance is the user's current vault position (sum of holdings value).
@@ -241,6 +246,8 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
     txHash?: string;
     retryable?: boolean;
     actionType?: TransactionTab;
+    technicalCode?: string;
+    supportReference?: string;
   } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
@@ -637,8 +644,10 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
 
       setTxTimelineStatus("submitting");
 
+      let submittedTxHash: string | undefined;
+
       if (actionType === "deposit") {
-        await depositMutation.mutateAsync(mutationParams);
+        const depositResult = await depositMutation.mutateAsync(mutationParams);
 
         try {
           const depositKey = `${FIRST_DEPOSIT_PREFIX}${walletAddress}`;
@@ -651,8 +660,11 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
           console.warn("Storage access failed while tracking first deposit state", storageErr);
           runDepositConfetti();
         }
+
+        submittedTxHash = depositResult?.txHash;
       } else {
-        await withdrawMutation.mutateAsync(mutationParams);
+        const withdrawResult = await withdrawMutation.mutateAsync(mutationParams);
+        submittedTxHash = withdrawResult?.txHash;
       }
 
       transactionIntent.clearIntent();
@@ -664,6 +676,7 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
         message: actionType === "deposit"
           ? t("vaultDashboard.depositMessage").replace("{{amount}}", value.toFixed(2))
           : t("vaultDashboard.withdrawMessage").replace("{{amount}}", value.toFixed(2)),
+        txHash: submittedTxHash,
       });
       setTxTimelineStatus("finalized");
 
@@ -695,20 +708,20 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
         dashboardUrl.setStep("amount");
       }
 
-      let errorMessage = t("vaultDashboard.toast.genericError");
+      const transactionError = mapTransactionError(err);
+      const errorMessage = t(`vaultDashboard.toast.transactionErrors.${transactionError.kind}`);
 
-      if (isValidationError(err)) {
-        errorMessage = err.details?.[0]?.message || errorMessage;
-      } else if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (mappedError.generalError) {
-        errorMessage = mappedError.generalError;
-      }
+      console.error("Vault transaction failed", {
+        action: actionType,
+        error: err,
+        technicalCode: transactionError.technicalCode,
+        supportReference: transactionError.supportReference,
+      });
 
       // Field-level validation failures need corrected input, not a blind resubmit.
       // Everything else (network hiccups, RPC timeouts, transient 5xx) is worth retrying.
       const retryable =
-        !hasFieldErrors && !isValidationError(err) && (isApiError(err) ? err.retryable : true);
+        !hasFieldErrors && !isValidationError(err) && transactionError.retryable;
 
       if (options.isRetry) {
         setRetryCount((count) => count + 1);
@@ -719,6 +732,8 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
         message: errorMessage,
         retryable,
         actionType,
+        technicalCode: transactionError.technicalCode,
+        supportReference: transactionError.supportReference,
       });
 
       toast.error({
@@ -848,6 +863,16 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
             </div>
           </div>
 
+          <VaultDecisionSummary
+            usdcBalance={walletAddress ? usdcBalance : 0}
+            apy={summary.apy}
+            formattedTvl={formattedTvl}
+            walletConnected={Boolean(walletAddress)}
+            onDepositClick={() => {
+              window.dispatchEvent(new Event("TRIGGER_DEPOSIT"));
+            }}
+          />
+
           <div
             style={{
               height: "1px",
@@ -855,6 +880,13 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
               margin: "24px 0",
             }}
           />
+
+          {walletAddress && (
+            <VaultPositionBalance
+              holding={(portfolioHoldings ?? []).find((holding) => holding.symbol === "yvUSDC")}
+              isLoading={isPortfolioLoading}
+            />
+          )}
 
           {/* Per-widget refresh control + stale indicator for stats panel */}
           <div style={{ marginBottom: "16px" }}>
@@ -938,6 +970,11 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
             </div>
           </div>
 
+          <FeeUtilizationPanel
+            fees={summaryUnavailable ? undefined : summary.fees}
+            isLoading={delayedLoading}
+          />
+
           <RiskSummaryCard
             items={riskItems}
             title={t("vaultDashboard.riskSummary.title")}
@@ -958,6 +995,36 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
           <div className="glass-panel" style={{ padding: "20px", background: "var(--bg-muted)" }}>
             {delayedLoading ? (
               <DashboardCardSkeleton />
+            ) : summaryUnavailable ? (
+              <>
+                <h3
+                  style={{
+                    fontSize: "1.1rem",
+                    marginBottom: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <TrendingUp size={18} color="var(--accent-purple)" />
+                  {t("vaultDashboard.strategyOverview")}
+                </h3>
+                <EmptyState
+                  kind="error"
+                  title={t("vaultDashboard.strategyUnavailableTitle")}
+                  description={t("vaultDashboard.strategyUnavailableDesc")}
+                  icon={<TrendingUp size={24} />}
+                  action={{
+                    label: t("common.retry"),
+                    onClick: () => void refresh(),
+                  }}
+                  secondaryAction={{
+                    label: t("emptyState.compareStrategies"),
+                    href: "/compare",
+                    variant: "secondary",
+                  }}
+                />
+              </>
             ) : (
               <>
                 <h3
@@ -1046,6 +1113,36 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
               <span>{t("vaultDashboard.strategyIdLabel")}</span>
               <span className="copy-field-value copy-field-value-mono">{strategy.id}</span>
               <CopyButton value={strategy.id} label="strategy ID" />
+            </div>
+            {strategySwitchCooldownRemaining > 0 && (
+              <div
+                style={{
+                  marginTop: "8px",
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  background: "rgba(234, 179, 8, 0.1)",
+                  border: "1px solid rgba(234, 179, 8, 0.3)",
+                  fontSize: "0.78rem",
+                  color: "var(--text-secondary)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <Clock3 size={14} style={{ color: "#eab308", flexShrink: 0 }} />
+                <span>
+                  Strategy switch cooldown: {strategySwitchCooldownRemaining}s remaining
+                </span>
+              </div>
+            )}
+            <div style={{ marginTop: "12px" }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(`/strategies/${strategy.id}`)}
+              >
+                {t("vaultDashboard.viewDetails")}
+              </button>
             </div>
           </>
             )}
@@ -1173,7 +1270,14 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
                             onBlur={handleBlur}
                             disabled={isBusy || (tab === "deposit" && isCapReached)}
                             error={showInlineError ? activeAmountError ?? undefined : undefined}
-                            helperText={tab === "deposit" ? t("vaultDashboard.minDeposit").replace("{{amount}}", MIN_DEPOSIT_AMOUNT.toFixed(2)) : t("vaultDashboard.maxWithdraw").replace("{{amount}}", tabBalance.toFixed(2))}
+                            helperText={
+                              tab === "deposit"
+                                ? t("vaultDashboard.depositHelperText")
+                                    .replace("{{min}}", MIN_DEPOSIT_AMOUNT.toFixed(2))
+                                    .replace("{{max}}", MAX_DEPOSIT_AMOUNT.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+                                    .replace("{{decimals}}", String(USDC_DISPLAY_DECIMALS))
+                                : t("vaultDashboard.maxWithdraw").replace("{{amount}}", tabBalance.toFixed(2))
+                            }
                             className={isValidAmount ? "input-valid" : ""}
                           />
 
@@ -1281,7 +1385,7 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
                                   />
                                 </span>
                                 <span style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--accent-cyan)" }}>
-                                  ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â  {estimatedNetAmount.toFixed(2)} yvUSDC
+                                  ≈ {estimatedNetAmount.toFixed(2)} yvUSDC
                                 </span>
                               </div>
                             )}
@@ -1461,7 +1565,7 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
                                   userSelect: "none",
                                 }}
                               >
-                                <span style={{ fontSize: "1.2em" }}>ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â</span>
+                                <span style={{ fontSize: "1.2em" }}>⚙</span>
                                 Advanced Settings
                                 <span style={{ marginLeft: "auto", fontSize: "0.7rem", color: "var(--text-secondary)" }}>
                                   Optional
@@ -1690,6 +1794,7 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
                         <TransactionTimeline
                           status={txTimelineStatus}
                           errorMessage={transactionResult?.message}
+                          txHash={transactionResult?.txHash}
                         />
 
                         {(txTimelineStatus === "finalized" || txTimelineStatus === "failed") && (
@@ -1703,6 +1808,11 @@ const VaultDashboard: React.FC<VaultDashboardProps> = ({
                             <p style={{ color: "var(--text-secondary)", marginBottom: "8px", maxWidth: "300px" }}>
                               {transactionResult?.message}
                             </p>
+                            {transactionResult?.supportReference && (
+                              <p style={{ color: "var(--text-tertiary)", marginBottom: "8px", fontSize: "0.75rem" }}>
+                                Reference: {transactionResult.supportReference}
+                              </p>
+                            )}
 
                             {!transactionResult?.success && retryCount >= MAX_TRANSACTION_RETRY_ATTEMPTS && (
                               <p

@@ -18,10 +18,13 @@
 export interface ServerErrorResponse {
   code?: string;
   message: string;
-  details?: {
-    field?: string;
-    [key: string]: unknown;
-  };
+  details?: ServerErrorDetail | ServerErrorDetail[];
+}
+
+interface ServerErrorDetail {
+  field?: string;
+  message?: string;
+  [key: string]: unknown;
 }
 
 export interface MappedFieldError {
@@ -32,6 +35,63 @@ export interface MappedFieldError {
 export interface MappedServerError {
   fieldErrors: MappedFieldError[];
   generalError: string | null;
+}
+
+export type TransactionErrorKind =
+  | "walletRejected"
+  | "walletPermission"
+  | "network"
+  | "insufficientFunds"
+  | "contractState"
+  | "validation"
+  | "unknown";
+
+export interface MappedTransactionError {
+  kind: TransactionErrorKind;
+  retryable: boolean;
+  technicalCode?: string;
+  supportReference?: string;
+}
+
+/** Classify wallet/RPC/contract failures without exposing raw provider text. */
+export function mapTransactionError(error: unknown): MappedTransactionError {
+  const apiError = error && typeof error === "object"
+    ? error as { code?: string; serverCode?: string; serverError?: string; message?: string; retryable?: boolean; correlationId?: string; traceId?: string }
+    : undefined;
+  const raw = [apiError?.serverCode, apiError?.serverError, apiError?.message]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const technicalCode = apiError?.serverCode || apiError?.code;
+  const supportReference = apiError?.correlationId || apiError?.traceId;
+  const result = (kind: TransactionErrorKind, retryable: boolean): MappedTransactionError => ({
+    kind,
+    retryable,
+    technicalCode,
+    supportReference,
+  });
+
+  if (/reject|denied|cancel|declin/.test(raw)) return result("walletRejected", true);
+  if (/permission|unauthori[sz]|not allowed|wallet.*(locked|disconnected)/.test(raw)) {
+    return result("walletPermission", true);
+  }
+  if (/insufficient|not enough|balance|funds|liquidity/.test(raw)) {
+    return result("insufficientFunds", false);
+  }
+  if (/network|timeout|rpc|service unavailable|fetch failed|gateway/.test(raw)) {
+    return result("network", true);
+  }
+  if (/validation|invalid input|invalid amount/.test(raw)) {
+    return result("validation", false);
+  }
+  if (/validation|invalid|paused|cap|timelock|cooldown|simulation|contract|restore/.test(raw)) {
+    return result("contractState", false);
+  }
+  if (apiError?.code === "AUTH_ERROR" || apiError?.code === "ABORTED") {
+    return result("walletPermission", false);
+  }
+  if (apiError?.retryable === true) return result("network", true);
+  return result("unknown", false);
 }
 
 /**
@@ -59,19 +119,30 @@ export function mapServerError(
   if (error && typeof error === "object") {
     const err = error as ServerErrorResponse;
 
-    // Check if this is a field-level error
-    if (err.details?.field) {
+    const details = Array.isArray(err.details)
+      ? err.details
+      : err.details
+        ? [err.details]
+        : [];
+
+    // Validation responses may contain several field-level failures.
+    for (const detail of details) {
+      if (typeof detail.field !== "string" || !detail.field) {
+        continue;
+      }
       const fieldMessage =
-        typeof err.details.message === "string" ? err.details.message : err.message;
+        typeof detail.message === "string" ? detail.message : err.message;
       fieldErrors.push({
-        fieldName: err.details.field,
+        fieldName: detail.field,
         message: sanitizeErrorMessage(fieldMessage),
       });
-    } else if (err.message) {
+    }
+
+    if (fieldErrors.length === 0 && err.message) {
       // General error message
       generalError = sanitizeErrorMessage(err.message);
-    } else {
-      generalError = "An error occurred. Please try again.";
+    } else if (err.message) {
+      generalError = null;
     }
 
     if (fieldErrors.length === 0 && !generalError) {

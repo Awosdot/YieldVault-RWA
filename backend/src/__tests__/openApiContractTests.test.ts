@@ -76,7 +76,7 @@ describe('OpenAPI contract: GET /health', () => {
 
   it('checks object contains all required dependency keys', async () => {
     const res = await request(app).get('/health');
-    const requiredKeys = ['api', 'cache', 'stellarRpc', 'databasePrimary', 'databaseReplica', 'prisma', 'jobs'];
+    const requiredKeys = ['api', 'cache', 'stellarRpc', 'databasePrimary', 'databaseReplica', 'prisma', 'jobs', 'indexer'];
     for (const key of requiredKeys) {
       expect(res.body.checks).toHaveProperty(key);
       expect(['up', 'down', 'degraded', 'unknown']).toContain(res.body.checks[key]);
@@ -120,7 +120,7 @@ describe('OpenAPI contract: GET /ready', () => {
   it('dependencies object has boolean values for each key', async () => {
     const res = await request(app).get('/ready');
     const deps = res.body.dependencies as Record<string, unknown>;
-    const expectedKeys = ['cache', 'stellarRpc', 'database', 'prisma'];
+    const expectedKeys = ['cache', 'stellarRpc', 'database', 'prisma', 'indexer'];
     for (const key of expectedKeys) {
       expect(deps).toHaveProperty(key);
       expect(typeof deps[key]).toBe('boolean');
@@ -146,8 +146,11 @@ describe('OpenAPI contract: GET /api/v1/vault/summary', () => {
 
   it('numeric fields are finite numbers', async () => {
     const res = await request(app).get('/api/v1/vault/summary');
-    expect(Number.isFinite(res.body.totalAssets)).toBe(true);
-    expect(Number.isFinite(res.body.totalShares)).toBe(true);
+    // totalAssets/totalShares/sharePrice are Decimal-backed strings (to avoid
+    // floating-point precision loss), not numbers — verify they parse cleanly.
+    expect(Number.isFinite(Number(res.body.totalAssets))).toBe(true);
+    expect(Number.isFinite(Number(res.body.totalShares))).toBe(true);
+    expect(Number.isFinite(Number(res.body.sharePrice))).toBe(true);
     expect(Number.isFinite(res.body.apy)).toBe(true);
   });
 
@@ -159,7 +162,7 @@ describe('OpenAPI contract: GET /api/v1/vault/summary', () => {
 
   it('does not contain unexpected extra fields (additionalProperties: false)', async () => {
     const res = await request(app).get('/api/v1/vault/summary');
-    const allowedKeys = new Set(['totalAssets', 'totalShares', 'apy', 'timestamp']);
+    const allowedKeys = new Set(['totalAssets', 'totalShares', 'sharePrice', 'apy', 'timestamp']);
     for (const key of Object.keys(res.body)) {
       expect(allowedKeys.has(key)).toBe(true);
     }

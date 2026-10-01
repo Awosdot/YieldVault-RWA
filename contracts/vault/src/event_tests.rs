@@ -1,6 +1,6 @@
 use super::*;
-use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{token, Address, Env};
+use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::{token, Address, Env, Symbol, TryFromVal};
 
 fn create_token_contract<'a>(env: &Env, admin: &Address) -> token::Client<'a> {
     let token_address = env
@@ -213,7 +213,7 @@ fn test_pause_and_unpause_emit_state_transition_events() {
 
     let admin = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    let usdc = create_token(&env, &token_admin);
+    let usdc = create_token_contract(&env, &token_admin);
 
     let vault_id = env.register(YieldVault, ());
     let vault = YieldVaultClient::new(&env, &vault_id);
@@ -247,4 +247,59 @@ fn test_claim_fees_panics_when_no_treasury() {
     vault.accrue_yield(&1000); // accrues 50 in treasury balance
 
     vault.claim_fees(); // should panic — no treasury set
+}
+
+#[test]
+fn test_deposit_and_withdraw_emit_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let usdc = create_token_contract(&env, &token_admin);
+    let usdc_admin = token::StellarAssetClient::new(&env, &usdc.address);
+    usdc_admin.mint(&user, &1000);
+
+    let vault_id = env.register(YieldVault, ());
+    let vault = YieldVaultClient::new(&env, &vault_id);
+    vault.initialize(&admin, &usdc.address);
+
+    vault.deposit(&user, &100);
+
+    let events = env.events().all();
+    let mut deposit_found = false;
+    for event in events.iter() {
+        if event.1.len() > 0 {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &event.1.get(0).unwrap()) {
+                if topic_sym == symbol_short!("deposit") {
+                    deposit_found = true;
+                    // Check if second topic is the user
+                    let topic_1: Address =
+                        Address::try_from_val(&env, &event.1.get(1).unwrap()).unwrap();
+                    assert_eq!(topic_1, user);
+                }
+            }
+        }
+    }
+    assert!(deposit_found, "Deposit event not found");
+
+    vault.withdraw(&user, &50);
+
+    let events_after = env.events().all();
+    let mut withdraw_found = false;
+    for event in events_after.iter() {
+        if event.1.len() > 0 {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &event.1.get(0).unwrap()) {
+                if topic_sym == symbol_short!("withdraw") {
+                    withdraw_found = true;
+                    // Check if second topic is the user
+                    let topic_1: Address =
+                        Address::try_from_val(&env, &event.1.get(1).unwrap()).unwrap();
+                    assert_eq!(topic_1, user);
+                }
+            }
+        }
+    }
+    assert!(withdraw_found, "Withdraw event not found");
 }

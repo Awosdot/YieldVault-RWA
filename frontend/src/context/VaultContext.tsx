@@ -1,8 +1,10 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useState,
 } from "react";
 import { subscribeToApiTelemetry, normalizeApiError } from "../lib/api";
 import type { ApiError } from "../lib/api";
@@ -24,8 +26,16 @@ interface VaultContextType {
   formattedApy: string;
   lastUpdate: Date;
   isLoading: boolean;
+  /**
+   * True when the vault summary query finished without data (e.g. the API
+   * failed). Consumers must not present `summary` as live while this is set —
+   * it is only a placeholder to keep dependents rendering.
+   */
+  summaryUnavailable: boolean;
   error: ApiError | null;
   contractPaused: boolean;
+  strategySwitchCooldownRemaining: number;
+  strategySwitchCooldownTotal: number;
   refresh: () => Promise<void>;
 }
 
@@ -64,6 +74,7 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const isLoading = isSummaryLoading || isHistoryLoading;
   const queryError = summaryError || historyError;
+  const summaryUnavailable = !isSummaryLoading && !data && Boolean(summaryError);
 
   const summary: VaultSummary = data
     ? {
@@ -113,8 +124,35 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({
   const currentApy = calculatedApy !== null ? calculatedApy : summary.apy;
   const formattedApy = calculatedApy !== null || data ? `${currentApy.toFixed(2)}%` : "N/A";
 
+  // Strategy switch cooldown tracking
+  const [strategySwitchCooldownRemaining, setStrategySwitchCooldownRemaining] = useState(0);
+  const [strategySwitchCooldownTotal, setStrategySwitchCooldownTotal] = useState(0);
+
+  // Poll cooldown from backend on interval
+  const fetchCooldown = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/vault/strategy/cooldown");
+      if (res.ok) {
+        const data = await res.json();
+        setStrategySwitchCooldownRemaining(data.remaining ?? 0);
+        setStrategySwitchCooldownTotal(data.total ?? 0);
+      }
+    } catch {
+      // Silently ignore — cooldown display is non-critical
+    }
+  }, []);
+
+  useEffect(() => {
+    const initialId = window.setTimeout(() => void fetchCooldown(), 0);
+    const interval = setInterval(() => void fetchCooldown(), 10000);
+    return () => {
+      window.clearTimeout(initialId);
+      clearInterval(interval);
+    };
+  }, [fetchCooldown]);
+
   const refresh = async () => {
-    await Promise.all([refetchSummary(), refetchHistory()]);
+    await Promise.all([refetchSummary(), refetchHistory(), fetchCooldown()]);
   };
 
   return (
@@ -131,8 +169,11 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({
         formattedApy,
         lastUpdate,
         isLoading,
+        summaryUnavailable,
         error,
         contractPaused: summary.contractPaused,
+        strategySwitchCooldownRemaining,
+        strategySwitchCooldownTotal,
         refresh,
       }}
     >

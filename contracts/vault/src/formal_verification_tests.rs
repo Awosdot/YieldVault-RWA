@@ -8,16 +8,25 @@
 
 #![cfg(test)]
 
+extern crate std;
+
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{token, Address, Env};
+use std::vec::Vec;
 
 use crate::{YieldVault, YieldVaultClient};
 
-fn create_test_token<'a>(e: &Env, admin: &Address) -> (token::Client<'a>, token::StellarAssetClient<'a>) {
+fn create_test_token<'a>(
+    e: &Env,
+    admin: &Address,
+) -> (token::Client<'a>, token::StellarAssetClient<'a>) {
     let addr = e
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
-    (token::Client::new(e, &addr), token::StellarAssetClient::new(e, &addr))
+    (
+        token::Client::new(e, &addr),
+        token::StellarAssetClient::new(e, &addr),
+    )
 }
 
 fn setup_formal_vault(e: &Env) -> (YieldVaultClient<'_>, token::StellarAssetClient<'_>, Address) {
@@ -65,7 +74,8 @@ fn test_formal_theorem_2_solvency_and_balance_conservation() {
     env.mock_all_auths();
 
     let (vault, usdc_sa, _) = setup_formal_vault(&env);
-    let users: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+    // Fixed-size array keeps this `no_std` test module free of an `alloc` dependency.
+    let users: [Address; 5] = core::array::from_fn(|_| Address::generate(&env));
 
     for (i, user) in users.iter().enumerate() {
         let amount = ((i + 1) * 2000) as i128;

@@ -24,6 +24,7 @@ import { cacheMiddleware } from './middleware/cache';
 import { tenantGuard } from './middleware/tenantGuard';
 import { Permission } from './middleware/rbac';
 import { createTimeoutFor } from './middleware/timeoutMiddleware';
+import { validate, TransactionListQuerySchema } from './middleware/validate';
 
 const router = Router();
 const CACHE_TTL_MS = parseInt(process.env.CACHE_LIST_ENDPOINTS_TTL_MS || '30000', 10);
@@ -51,6 +52,7 @@ router.get('/',
     allowAdminBypass: true, 
     adminBypassPermission: Permission.ADMIN_READ 
   }),
+  validate({ query: TransactionListQuerySchema }),
   createTimeoutFor.read(),
   async (req: Request, res: Response) => {
   const traceId = getCurrentTraceId();
@@ -62,8 +64,24 @@ router.get('/',
       const to = req.query.to as string | undefined;
 
       if (!walletAddress) {
+        // Validate type filter if provided
+        const { error: typeError } = parseTypeFilter(typeof type === 'string' ? type : undefined);
+        if (typeError) {
+          res.status(400).json({ error: 'Bad Request', status: 400, message: typeError });
+          return;
+        }
+
+        // Validate status filter if provided
+        const { error: statusError } = parseStatusFilter(
+          typeof status === 'string' ? status : undefined,
+        );
+        if (statusError) {
+          res.status(400).json({ error: 'Bad Request', status: 400, message: statusError });
+          return;
+        }
+
         try {
-          const response = buildTransactionsResponse({
+          const response = await buildTransactionsResponse({
             limit: typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined,
             cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
             page: typeof req.query.page === 'string' ? parseInt(req.query.page, 10) : undefined,

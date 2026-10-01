@@ -40,13 +40,17 @@ model SharePriceSnapshot {
 }
 
 model Transaction {
-  id           String   @id @default(uuid())
-  user         String
-  amount       String
-  type         String
-  status       String?
-  referralCode String?
-  timestamp    DateTime @default(now())
+  id            String   @id @default(uuid())
+  user          String
+  amount        String
+  type          String
+  status        String?
+  referralCode  String?
+  vaultId       String?
+  tenantId      String?
+  latencyMs     Int?
+  failureReason String?
+  timestamp     DateTime @default(now())
 
   // Issue #895 – query optimisation indices
   // Ordered by timestamp DESC to match the default sort on the list endpoint.
@@ -56,6 +60,7 @@ model Transaction {
   @@index([status, timestamp(sort: Desc)])
   @@index([user, type, timestamp(sort: Desc)])
   @@index([user, status, timestamp(sort: Desc)])
+  @@index([vaultId, tenantId, timestamp(sort: Desc)])
 }
 
 model Referral {
@@ -603,4 +608,88 @@ model WriteAheadAuditEntry {
   @@index([createdAt])
   @@index([configType])
   @@index([actor])
+}
+
+// ─── Vault Strategy Allocation & Exposure Guardrails ─────────────────────────
+
+model Vault {
+  id        String    @id @default(uuid())
+  tenantId  String
+  aum       Float     @default(0)
+  tvlUsd    String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  allocations Allocation[]
+
+  @@index([tenantId])
+  @@index([deletedAt])
+}
+
+model Strategy {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations Allocation[]
+}
+
+model Allocation {
+  id         String   @id @default(uuid())
+  vaultId    String
+  strategyId String
+  amount     Float    @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  vault    Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+
+  @@index([vaultId])
+  @@index([strategyId])
+}
+
+model ExposureBreach {
+  id              String   @id @default(uuid())
+  vaultId         String
+  strategyId      String
+  attemptedAmount String
+  reason          String
+  timestamp       DateTime @default(now())
+
+  @@index([vaultId])
+  @@index([strategyId])
+  @@index([timestamp])
+}
+
+// ─── Tenant Boundary ─────────────────────────────────────────────────────────
+
+model WalletTenantAssociation {
+  id            String    @id @default(uuid())
+  walletAddress String
+  tenantId      String
+  createdAt     DateTime  @default(now())
+  deletedAt     DateTime?
+
+  @@index([walletAddress, tenantId])
+  @@index([tenantId])
+model IdempotencyKey {
+  id            String    @id @default(uuid())
+  keyId         String
+  tenantId      String
+  walletAddress String?
+  operation     String
+  status        String    @default("pending") // pending | completed | failed
+  requestHash   String
+  responseHash  String?
+  responseBody  String?
+  statusCode    Int?
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+  expiresAt     DateTime
+
+  @@unique([keyId, tenantId])
+  @@index([expiresAt])
 }

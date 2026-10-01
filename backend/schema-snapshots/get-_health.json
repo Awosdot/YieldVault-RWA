@@ -13,6 +13,9 @@
     "environment": {
       "type": "string"
     },
+    "lastIndexedLedger": {
+      "type": "number"
+    },
     "checks": {
       "type": "object",
       "properties": {
@@ -78,6 +81,15 @@
             "degraded",
             "unknown"
           ]
+        },
+        "indexer": {
+          "type": "string",
+          "enum": [
+            "up",
+            "down",
+            "degraded",
+            "unknown"
+          ]
         }
       },
       "required": [
@@ -87,7 +99,8 @@
         "databasePrimary",
         "databaseReplica",
         "prisma",
-        "jobs"
+        "jobs",
+        "indexer"
       ],
       "additionalProperties": false
     },
@@ -117,6 +130,7 @@
     "timestamp",
     "uptime",
     "environment",
+    "lastIndexedLedger",
     "checks",
     "sorobanCircuitBreaker"
   ],

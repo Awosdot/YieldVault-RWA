@@ -46,12 +46,31 @@ describe('#711 API contract schema snapshots', () => {
     expect(issues.some((issue) => issue.message === 'field removed')).toBe(true);
   });
 
+  it('detects newly added required fields as breaking changes', () => {
+    const baseline = zodToJsonShape(HealthResponseSchema);
+    const current = JSON.parse(JSON.stringify(baseline)) as typeof baseline;
+    // Simulate an older snapshot that is missing the 'indexer' field
+    delete current.properties?.checks?.properties?.indexer;
+    current.properties!.checks!.required = (current.properties!.checks!.required ?? []).filter(
+      (k: string) => k !== 'indexer',
+    );
+
+    const issues = diffSchemaShapes(baseline, current, 'GET /health');
+    expect(
+      issues.some(
+        (issue) =>
+          issue.message.includes('new field added') || issue.message.includes('now required'),
+      ),
+    ).toBe(true);
+  });
+
   it('validates a conforming health payload', () => {
     const result = validateResponseAgainstSchema('GET /health', {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: 12.5,
       environment: 'test',
+      lastIndexedLedger: 0,
       checks: {
         api: 'up',
         cache: 'up',
@@ -60,6 +79,7 @@ describe('#711 API contract schema snapshots', () => {
         databaseReplica: 'up',
         prisma: 'up',
         jobs: 'up',
+        indexer: 'up',
       },
       sorobanCircuitBreaker: {
         state: 'closed',
@@ -82,8 +102,9 @@ describe('#711 API contract schema snapshots', () => {
 
   it('validates a conforming vault summary payload', () => {
     const result = validateResponseAgainstSchema('GET /api/v1/vault/summary', {
-      totalAssets: 1000,
-      totalShares: 500,
+      totalAssets: '1000',
+      totalShares: '500',
+      sharePrice: '1.000000',
       apy: 8.5,
       timestamp: new Date().toISOString(),
     });
@@ -133,5 +154,22 @@ describe('#711 API contract schema snapshots', () => {
       const second = generateSnapshotFor(endpoint);
       expect(first).toEqual(second);
     }
+  });
+
+  it('detects orphaned required references in baseline snapshot', () => {
+    const baseline = JSON.parse(JSON.stringify(zodToJsonShape(HealthResponseSchema))) as JsonSchemaShape;
+    delete baseline.properties?.checks.properties?.api;
+    const current = zodToJsonShape(HealthResponseSchema);
+    const issues = diffSchemaShapes(baseline, current, 'GET /health');
+    expect(issues.some((issue) => issue.message === 'required field missing from snapshot properties (orphaned reference)' && issue.path === 'GET /health.checks.api')).toBe(true);
+  });
+
+  it('detects new fields added to live schema', () => {
+    const baseline = zodToJsonShape(HealthResponseSchema);
+    const current = JSON.parse(JSON.stringify(baseline)) as JsonSchemaShape;
+    if (!current.properties) current.properties = {};
+    current.properties.newField = { type: 'string' };
+    const issues = diffSchemaShapes(baseline, current, 'GET /health');
+    expect(issues.some((issue) => issue.message === 'new field added to live schema (snapshot drift)' && issue.path === 'GET /health.newField')).toBe(true);
   });
 });

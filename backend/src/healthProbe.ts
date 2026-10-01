@@ -1,4 +1,5 @@
 import { logger } from './middleware/structuredLogging';
+import { observeExternalDependency } from './metrics';
 
 export interface DependencyProbeState {
   status: 'up' | 'down' | 'degraded';
@@ -9,7 +10,7 @@ export interface DependencyProbeState {
   consecutiveFailures: number;
 }
 
-export type DependencyName = 'database' | 'cache' | 'stellarRpc' | 'prisma' | 'queue';
+export type DependencyName = 'database' | 'cache' | 'stellarRpc' | 'prisma' | 'queue' | 'indexer';
 
 type ProbeFunction = () => Promise<'up' | 'down'>;
 
@@ -52,6 +53,7 @@ class HealthProbeService {
     try {
       const result = await registration.probe();
       const latencyMs = Date.now() - startMs;
+      observeExternalDependency(name, 'health_probe', latencyMs, result === 'up' ? 'success' : 'failure');
 
       state.status = result;
       state.latencyMs = latencyMs;
@@ -66,6 +68,7 @@ class HealthProbeService {
       }
     } catch (error) {
       const latencyMs = Date.now() - startMs;
+      observeExternalDependency(name, 'health_probe', latencyMs, 'failure');
       state.status = 'down';
       state.latencyMs = latencyMs;
       state.lastCheckedAt = new Date().toISOString();

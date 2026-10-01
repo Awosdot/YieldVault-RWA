@@ -12,6 +12,11 @@
 import { z, ZodError, type ZodIssue, type ZodTypeAny } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 import { isValidStellarAddress } from '../sanitization';
+import { sendApiError } from './apiError';
+import { WEBHOOK_EVENT_TYPES } from '../types/webhooks';
+
+export { WEBHOOK_EVENT_TYPES, type WebhookEventType } from '../types/webhooks';
+export * from '../types/validation';
 
 // Re-export shared vault schemas for route handlers and tests
 export {
@@ -87,14 +92,6 @@ export const RefreshSchema = z
   .strict();
 
 // ─── Webhook schemas ──────────────────────────────────────────────────────────
-
-/** Allowed event type literals — kept in sync with TransactionEventType in webhookDelivery.ts */
-export const WEBHOOK_EVENT_TYPES = [
-  'transaction.deposit.created',
-  'transaction.withdrawal.created',
-] as const;
-
-export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 
 /**
  * POST /admin/webhooks
@@ -229,13 +226,13 @@ export function validate(schemas: ValidateTargets) {
   return (req: Request, res: Response, next: NextFunction): void => {
     try {
       if (schemas.body) {
-        req.body = schemas.body.parse(req.body);
+        req.body = schemas.body.parse(req.body ?? {});
       }
       if (schemas.query) {
-        req.query = schemas.query.parse(req.query) as typeof req.query;
+        req.query = schemas.query.parse(req.query ?? {}) as typeof req.query;
       }
       if (schemas.params) {
-        req.params = schemas.params.parse(req.params) as typeof req.params;
+        req.params = schemas.params.parse(req.params ?? {}) as typeof req.params;
       }
       next();
     } catch (err) {
@@ -247,14 +244,12 @@ export function validate(schemas: ValidateTargets) {
           message: e.message,
         }));
 
-        res.status(400).json({
-          error: 'Bad Request',
+        sendApiError(req, res, {
           status: 400,
           code: 'VALIDATION_ERROR',
-          summary: 'Request validation failed',
           message: formatZodError(issues),
-          errors: details,
           details,
+          retryable: false,
         });
         return;
       }

@@ -3,7 +3,7 @@
   "info": {
     "title": "YieldVault Stellar RWA API",
     "version": "1.0.0",
-    "description": "API documentation for the YieldVault Stellar RWA backend.\n\n## API Version Negotiation\n\nEvery response includes `X-API-Version` and `X-API-Version-Supported` headers.\n\nClients may request a specific version via:\n- `Accept-Version: 1.0.0` header\n- `X-API-Version: 1.0.0` header (takes priority)\n- `Accept: application/json;version=1.0.0` media-type parameter\n\nIf the requested version is not supported, the server responds with **406 Not Acceptable**.\n\n## Deprecation\n\nLegacy unversioned routes (`/vault/*`, `/referrals/*`, `/transactions/*`, `/portfolio/*`) and `/api/*` paths (non-`/api/v1/`) return RFC 8594 deprecation headers (`Deprecation`, `Sunset`, `Link`, `X-API-Deprecation-Info`). Migrate to the corresponding `/api/v1/…` path before `Fri, 31 Dec 2027 23:59:59 GMT`.",
+    "description": "API documentation for the YieldVault Stellar RWA backend. The API exposes vault deposits/withdrawals, portfolio reads, referrals, webhooks, and operational admin endpoints. All responses use the standard error envelope `{ status, message, error: { code, message, correlationId } }`.\n\n**Rate limiting:** Global limiter is 100 requests / 15 minutes per IP; authenticated API endpoints are limited to 30 requests / minute per API key. Exceeding a limit returns `429` with the standard error envelope and a `retryAfter` detail.",
     "license": {
       "name": "MIT",
       "url": "https://spdx.org/licenses/MIT.html"
@@ -15,136 +15,99 @@
   },
   "servers": [
     {
-      "url": "/api/v1",
-      "description": "API v1"
+      "url": "http://localhost:3000",
+      "description": "Development server"
+    },
+    {
+      "url": "https://api.yieldvault.finance",
+      "description": "Production"
     }
   ],
   "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT issued by POST /auth/login or POST /auth/refresh."
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Admin API key. Format: `Authorization: <api-key>`."
+      },
+      "idempotencyKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-idempotency-key",
+        "description": "Recommended for mutation requests to ensure idempotency."
+      }
+    },
     "parameters": {
-      "AcceptVersion": {
+      "correlationId": {
+        "name": "X-Correlation-ID",
         "in": "header",
-        "name": "Accept-Version",
         "required": false,
+        "description": "Optional client-supplied correlation id. If omitted, the server generates one and echoes it back in the response header for distributed tracing.",
         "schema": {
           "type": "string",
-          "example": "1.0.0"
-        },
-        "description": "Requested API version. Supported values: `1`, `v1`, `1.0.0`, or any `1.x.y` patch/minor. Omitting this header defaults to the current version. If the requested version is unsupported the server responds with 406."
-      },
-      "XApiVersionRequest": {
-        "in": "header",
-        "name": "X-API-Version",
-        "required": false,
-        "schema": {
-          "type": "string",
-          "example": "1.0.0"
-        },
-        "description": "Explicit version override. Takes priority over `Accept-Version`. Supported values: `1`, `v1`, `1.0.0`, or any `1.x.y` patch/minor."
-      }
-    },
-    "headers": {
-      "XApiVersion": {
-        "description": "The API version that processed this request.",
-        "schema": {
-          "type": "string",
-          "example": "1.0.0"
-        }
-      },
-      "XApiVersionSupported": {
-        "description": "Comma-separated list of all API versions currently supported by this server.",
-        "schema": {
-          "type": "string",
-          "example": "1.0.0"
-        }
-      },
-      "Deprecation": {
-        "description": "Present and set to `true` when the requested path is on the legacy unversioned API surface.",
-        "schema": {
-          "type": "string",
-          "enum": ["true"]
-        }
-      },
-      "Sunset": {
-        "description": "RFC 8594. The date after which the deprecated endpoint will be removed.",
-        "schema": {
-          "type": "string",
-          "example": "Fri, 31 Dec 2027 23:59:59 GMT"
-        }
-      },
-      "Link": {
-        "description": "RFC 5988 link relation pointing to the successor canonical path (`rel=\"successor-version\"`).",
-        "schema": {
-          "type": "string",
-          "example": "</api/v1/vault/summary>; rel=\"successor-version\""
-        }
-      },
-      "XApiDeprecationInfo": {
-        "description": "Human-readable deprecation notice with the successor path and sunset date.",
-        "schema": {
-          "type": "string"
+          "format": "uuid"
         }
       }
     },
-    "responses": {
-      "406VersionNotAcceptable": {
-        "description": "The API version requested via `Accept-Version`, `X-API-Version`, or the `version` media-type parameter is not supported by this server.",
-        "headers": {
-          "X-API-Version-Supported": {
-            "$ref": "#/components/headers/XApiVersionSupported"
-          }
-        },
-        "content": {
-          "application/json": {
-            "schema": {
-              "type": "object",
-              "required": ["error", "status", "message", "supportedVersions"],
-              "properties": {
-                "error": {
-                  "type": "string",
-                  "example": "Not Acceptable"
-                },
-                "status": {
-                  "type": "integer",
-                  "example": 406
-                },
-                "message": {
-                  "type": "string",
-                  "example": "The requested API version '2.0.0' is not supported. Supported versions: 1.0.0"
-                },
-                "supportedVersions": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "example": ["1.0.0"]
-                }
+    "schemas": {
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "status",
+          "message",
+          "error"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "example": 400
+          },
+          "message": {
+            "type": "string",
+            "example": "Some of the information you provided is invalid. Please check and try again."
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "VALIDATION_ERROR"
+              },
+              "message": {
+                "type": "string",
+                "example": "Validation failed"
+              },
+              "correlationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "details": {
+                "type": "object",
+                "nullable": true
               }
             }
           }
         }
-      }
-    },
-    "securitySchemes": {
-      "IdempotencyKey": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "x-idempotency-key",
-        "description": "Required for mutation requests to ensure idempotency."
-      }
-    },
-    "schemas": {
+      },
       "PaginationMeta": {
         "type": "object",
         "properties": {
           "count": {
             "type": "integer"
           },
-          "limit": {
-            "type": "integer"
-          },
           "total": {
-            "type": "integer",
-            "nullable": true
+            "type": "integer"
           },
           "nextCursor": {
             "type": "string",
@@ -155,12 +118,10 @@
             "nullable": true
           },
           "currentPage": {
-            "type": "integer",
-            "nullable": true
+            "type": "integer"
           },
           "totalPages": {
-            "type": "integer",
-            "nullable": true
+            "type": "integer"
           },
           "hasNextPage": {
             "type": "boolean"
@@ -174,13 +135,23 @@
         "type": "object",
         "properties": {
           "totalAssets": {
-            "type": "number"
+            "type": "number",
+            "example": 0
           },
           "totalShares": {
-            "type": "number"
+            "type": "number",
+            "example": 0
           },
           "apy": {
-            "type": "number"
+            "type": ["number", "null"],
+            "example": 8.45,
+            "description": "Annualised APY as a decimal percentage. null when the vault has insufficient price history (e.g. zero shares or fewer than 2 snapshots)."
+          },
+          "apyStatus": {
+            "type": "string",
+            "enum": ["ok", "insufficient_data"],
+            "example": "ok",
+            "description": "ok when apy is a valid number; insufficient_data when apy is null."
           },
           "timestamp": {
             "type": "string",
@@ -188,331 +159,380 @@
           }
         }
       },
-      "Error": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "status": {
-            "type": "integer"
-          },
-          "message": {
-            "type": "string"
-          }
-        }
-      },
-      "Transaction": {
+      "DepositRequest": {
         "type": "object",
         "required": [
-          "id",
-          "type",
-          "status",
           "amount",
           "asset",
-          "timestamp",
-          "transactionHash",
           "walletAddress"
         ],
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "deposit",
-              "withdrawal"
-            ]
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "completed",
-              "failed"
-            ]
-          },
           "amount": {
-            "type": "string"
+            "type": "string",
+            "example": "100.00"
           },
           "asset": {
-            "type": "string"
+            "type": "string",
+            "example": "USDC"
+          },
+          "walletAddress": {
+            "type": "string",
+            "example": "GABC..."
+          }
+        }
+      },
+      "DepositResponse": {
+        "type": "object",
+        "properties": {
+          "txHash": {
+            "type": "string",
+            "example": "a1b2c3..."
+          },
+          "shares": {
+            "type": "string",
+            "example": "99.5"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "timestamp",
+          "uptime",
+          "environment",
+          "checks"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "healthy"
           },
           "timestamp": {
             "type": "string",
             "format": "date-time"
           },
-          "transactionHash": {
-            "type": "string"
+          "uptime": {
+            "type": "number",
+            "example": 123.4
           },
-          "walletAddress": {
-            "type": "string"
-          }
-        }
-      },
-      "PortfolioHolding": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "asset": {
-            "type": "string"
-          },
-          "vaultName": {
-            "type": "string"
-          },
-          "symbol": {
-            "type": "string"
-          },
-          "shares": {
-            "type": "number"
-          },
-          "apy": {
-            "type": "number"
-          },
-          "valueUsd": {
-            "type": "number"
-          },
-          "unrealizedGainUsd": {
-            "type": "number"
-          },
-          "issuer": {
-            "type": "string"
-          },
-          "status": {
+          "environment": {
             "type": "string",
-            "enum": [
-              "active",
-              "pending"
-            ]
+            "example": "production"
           },
-          "walletAddress": {
-            "type": "string"
-          }
-        }
-      },
-      "VaultHistoryPoint": {
-        "type": "object",
-        "properties": {
-          "date": {
-            "type": "string",
-            "format": "date"
-          },
-          "value": {
-            "type": "number"
+          "checks": {
+            "type": "object",
+            "required": [
+              "api",
+              "cache",
+              "stellarRpc",
+              "databasePrimary",
+              "databaseReplica",
+              "prisma",
+              "jobs",
+              "indexer"
+            ],
+            "properties": {
+              "api": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "cache": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "stellarRpc": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "databasePrimary": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "databaseReplica": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "prisma": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "jobs": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              },
+              "indexer": {
+                "type": "string",
+                "enum": [
+                  "up",
+                  "down",
+                  "degraded",
+                  "unknown"
+                ]
+              }
+            }
           }
         }
       }
     }
   },
+  "tags": [
+    {
+      "name": "System",
+      "description": "Health, readiness, and metrics"
+    },
+    {
+      "name": "Auth",
+      "description": "Wallet authentication"
+    },
+    {
+      "name": "Vault",
+      "description": "Deposits, withdrawals, and strategy"
+    },
+    {
+      "name": "Reads",
+      "description": "Portfolio, transactions, and history"
+    },
+    {
+      "name": "Referrals",
+      "description": "Referral codes and stats"
+    },
+    {
+      "name": "Admin",
+      "description": "Operational/admin endpoints (API key required)"
+    }
+  ],
   "paths": {
-    "/api/v1/referrals/{wallet}": {
+    "/health": {
       "get": {
-        "summary": "Get referral stats for a wallet",
-        "description": "Returns referral count and total reward earned for the given wallet address.",
         "tags": [
-          "Referrals"
+          "System"
         ],
+        "summary": "Liveness probe",
+        "description": "Returns immediately with service health status and dependency checks.",
         "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" },
           {
-            "in": "path",
-            "name": "wallet",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Wallet address of the referrer"
+            "$ref": "#/components/parameters/correlationId"
           }
         ],
         "responses": {
           "200": {
-            "description": "Referral stats",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" }
-            },
+            "description": "Service healthy",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "referral_count": {
-                      "type": "integer"
-                    },
-                    "total_reward_earned": {
-                      "type": "string"
-                    }
+                  "$ref": "#/components/schemas/HealthResponse"
+                },
+                "example": {
+                  "status": "healthy",
+                  "timestamp": "2024-01-01T00:00:00.000Z",
+                  "uptime": 123.4,
+                  "environment": "production",
+                  "checks": {
+                    "api": "up",
+                    "cache": "up",
+                    "stellarRpc": "up",
+                    "indexer": "up"
                   }
                 }
               }
             }
           },
-          "404": {
-            "description": "Wallet has no referral activity"
-          },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
-          },
-          "500": {
-            "description": "Internal server error"
+          "503": {
+            "description": "One or more dependencies are down"
           }
         }
       }
     },
-    "/api/v1/referrals/code/{wallet}": {
+    "/ready": {
       "get": {
-        "summary": "Get referral code for a wallet",
-        "description": "Returns the referral code for the given wallet address, creating one if it doesn't exist.",
         "tags": [
-          "Referrals"
+          "System"
         ],
+        "summary": "Readiness probe",
+        "description": "Returns 200 only when all critical dependencies are available.",
         "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" },
           {
-            "in": "path",
-            "name": "wallet",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Wallet address to get referral code for"
+            "$ref": "#/components/parameters/correlationId"
           }
         ],
         "responses": {
           "200": {
-            "description": "Referral code",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" }
-            },
+            "description": "Ready for traffic"
+          },
+          "503": {
+            "description": "Not ready"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Prometheus metrics",
+        "description": "Exposes Prometheus-scraped metrics (request counts, latency, vault TVL).",
+        "responses": {
+          "200": {
+            "description": "Prometheus exposition format"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Wallet login",
+        "description": "Issues a 15-min access JWT + 7-day refresh token. Rate limited: global 100 req / 15 min per IP; authenticated APIs 30 req / min per key. `429` responses follow the standard error envelope with a `retryAfter` detail.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/correlationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authenticated",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    }
-                  }
+                "example": {
+                  "accessToken": "jwt...",
+                  "refreshToken": "jwt..."
                 }
               }
             }
           },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
-          },
-          "500": {
-            "description": "Internal server error"
+          "401": {
+            "description": "Authentication failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/api/v1/transactions": {
-      "get": {
-        "summary": "List transactions",
-        "description": "Returns a paginated list of transactions with optional filtering.",
+    "/auth/refresh": {
+      "post": {
         "tags": [
-          "Transactions"
+          "Auth"
         ],
+        "summary": "Rotate refresh token",
+        "description": "Issues a new access JWT; reuse of a revoked refresh token is rejected (401).",
+        "responses": {
+          "200": {
+            "description": "Refreshed"
+          },
+          "401": {
+            "description": "Invalid or revoked refresh token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vault/summary": {
+      "get": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "Vault summary",
+        "description": "Returns TVL, share price, and APY summary for the vault.",
+        "responses": {
+          "200": {
+            "description": "Summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vaults/{id}/apy": {
+      "get": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "Vault APY",
+        "description": "Returns the annualised APY for the specified vault. Returns `apy: null` with `apyStatus: 'insufficient_data'` when the vault has zero shares or fewer than two price snapshots (e.g. a newly created vault).",
         "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" },
           {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "default": 20
-            }
-          },
-          {
-            "in": "query",
-            "name": "cursor",
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page",
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "type",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "deposit",
-                "withdrawal",
-                "all"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "status",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "pending",
-                "completed",
-                "failed",
-                "all"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "from",
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            }
-          },
-          {
-            "in": "query",
-            "name": "to",
-            "schema": {
-              "type": "string",
-              "format": "date-time"
-            }
-          },
-          {
-            "in": "query",
-            "name": "walletAddress",
-            "schema": {
-              "type": "string"
-            }
+            },
+            "description": "Vault identifier"
           }
         ],
         "responses": {
           "200": {
-            "description": "List of transactions",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" }
-            },
+            "description": "Vault APY result",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "required": ["apy", "apyStatus", "timestamp"],
                   "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Transaction"
-                      }
+                    "apy": {
+                      "type": ["number", "null"],
+                      "example": 8.45,
+                      "description": "Annualised APY as a decimal percentage. null when insufficient data."
                     },
-                    "pagination": {
-                      "$ref": "#/components/schemas/PaginationMeta"
+                    "apyStatus": {
+                      "type": "string",
+                      "enum": ["ok", "insufficient_data"],
+                      "example": "ok"
                     },
                     "timestamp": {
                       "type": "string",
@@ -522,46 +542,223 @@
                 }
               }
             }
-          },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
           }
         }
       }
     },
-    "/api/v1/portfolio/holdings": {
-      "get": {
-        "summary": "List portfolio holdings",
-        "description": "Returns a paginated list of user holdings.",
+    "/api/v1/vault/deposits": {
+      "post": {
         "tags": [
-          "Portfolio"
+          "Vault"
         ],
+        "summary": "Deposit into the vault",
+        "description": "Creates a deposit. Requires allowlisted wallet. Rate limited: global 100 req / 15 min per IP; authenticated APIs 30 req / min per key. `429` responses follow the standard error envelope with a `retryAfter` detail.",
+        "security": [
+          {
+            "idempotencyKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepositRequest"
+              },
+              "example": {
+                "amount": "100.00",
+                "asset": "USDC",
+                "walletAddress": "GABC..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Deposit submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepositResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wallet not allowlisted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vault/withdrawals": {
+      "post": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "Withdraw from the vault",
+        "description": "Creates a withdrawal of claimable balance. Rate limited: global 100 req / 15 min per IP; authenticated APIs 30 req / min per key. `429` responses follow the standard error envelope with a `retryAfter` detail.",
+        "security": [
+          {
+            "idempotencyKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepositRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Withdrawal submitted"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vault/strategy": {
+      "get": {
+        "tags": [
+          "Vault"
+        ],
+        "summary": "Active strategy",
+        "description": "Returns the currently selected vault strategy.",
+        "responses": {
+          "200": {
+            "description": "Strategy"
+          }
+        }
+      }
+    },
+    "/api/transactions": {
+      "get": {
+        "tags": [
+          "Reads"
+        ],
+        "summary": "List transactions",
+        "description": "Paginated transaction history. Supports cursor + page pagination.",
         "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" },
           {
+            "name": "cursor",
             "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
             "name": "limit",
-            "schema": {
-              "type": "integer",
-              "default": 20
-            }
-          },
-          {
             "in": "query",
-            "name": "status",
             "schema": {
-              "type": "string",
-              "enum": [
-                "active",
-                "pending",
-                "all"
-              ]
+              "type": "integer"
             }
-          },
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transactions",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": [],
+                  "meta": {
+                    "count": 0,
+                    "total": 0,
+                    "hasNextPage": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/portfolio/holdings": {
+      "get": {
+        "tags": [
+          "Reads"
+        ],
+        "summary": "Portfolio holdings",
+        "responses": {
+          "200": {
+            "description": "Holdings"
+          }
+        }
+      }
+    },
+    "/api/vault/history": {
+      "get": {
+        "tags": [
+          "Reads"
+        ],
+        "summary": "Vault history",
+        "responses": {
+          "200": {
+            "description": "History"
+          }
+        }
+      }
+    },
+    "/api/vault/apy/history": {
+      "get": {
+        "tags": [
+          "Reads"
+        ],
+        "summary": "APY history",
+        "responses": {
+          "200": {
+            "description": "APY history"
+          }
+        }
+      }
+    },
+    "/referrals/:wallet": {
+      "get": {
+        "tags": [
+          "Referrals"
+        ],
+        "summary": "Referral stats for a wallet",
+        "parameters": [
           {
-            "in": "query",
-            "name": "walletAddress",
+            "name": "wallet",
+            "in": "path",
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -569,182 +766,160 @@
         ],
         "responses": {
           "200": {
-            "description": "List of holdings",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" }
-            }
+            "description": "Stats"
           },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
-          }
-        }
-      }
-    },
-    "/api/v1/vault/history": {
-      "get": {
-        "summary": "List vault history",
-        "description": "Returns historical data points for vault performance.",
-        "tags": [
-          "Vault"
-        ],
-        "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" },
-          {
-            "in": "query",
-            "name": "limit",
-            "schema": {
-              "type": "integer",
-              "default": 30
-            }
-          },
-          {
-            "in": "query",
-            "name": "from",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "to",
-            "schema": {
-              "type": "string",
-              "format": "date"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Vault history points",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" }
-            }
-          },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
-          }
-        }
-      }
-    },
-    "/api/v1/vault/apy/history": {
-      "get": {
-        "summary": "APY history",
-        "description": "Returns one APY data point per day for the requested range. Missing days are backfilled with the previous known value (never null). Snapshots are written nightly by the APY snapshot job (Issue #374).\n",
-        "tags": [
-          "Vault"
-        ],
-        "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" },
-          {
-            "in": "query",
-            "name": "days",
-            "schema": {
-              "type": "integer",
-              "default": 30,
-              "minimum": 1,
-              "maximum": 365
-            },
-            "description": "Number of calendar days of history to return (max 365)."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Array of APY snapshots ordered oldest → newest",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" }
-            },
+          "404": {
+            "description": "No referral activity",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "date": {
-                            "type": "string",
-                            "format": "date"
-                          },
-                          "apy": {
-                            "type": "number"
-                          }
-                        }
-                      }
-                    },
-                    "days": {
-                      "type": "integer"
-                    },
-                    "count": {
-                      "type": "integer"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/referrals/code/:wallet": {
+      "get": {
+        "tags": [
+          "Referrals"
+        ],
+        "summary": "Referral code for a wallet",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Referral code"
+          }
+        }
+      }
+    },
+    "/admin/allowlist": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List allowlisted wallets",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Allowlist"
+          },
+          "403": {
+            "description": "Missing API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/webhooks": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List webhook endpoints",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Webhooks"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Register webhook endpoint",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "eventTypes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
                     }
+                  },
+                  "enabled": {
+                    "type": "boolean"
                   }
                 }
               }
             }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered"
           },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/vault/summary": {
+    "/admin/audit-logs": {
       "get": {
-        "summary": "Vault summary (deprecated)",
-        "description": "**Deprecated.** Returns high-level vault metrics including total assets, shares, and APY.\n\nThis endpoint is on the legacy unversioned API surface. Migrate to `/api/v1/vault/summary` before `Fri, 31 Dec 2027 23:59:59 GMT`.\n\nThe response includes `Deprecation: true`, `Sunset`, `Link` (RFC 8594), and `X-API-Deprecation-Info` headers.",
-        "deprecated": true,
         "tags": [
-          "Vault"
+          "Admin"
         ],
-        "parameters": [
-          { "$ref": "#/components/parameters/AcceptVersion" },
-          { "$ref": "#/components/parameters/XApiVersionRequest" }
+        "summary": "List admin audit logs",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
         ],
         "responses": {
           "200": {
-            "description": "Vault summary metrics (redirect — see `Location` header for canonical URL)",
-            "headers": {
-              "X-API-Version": { "$ref": "#/components/headers/XApiVersion" },
-              "X-API-Version-Supported": { "$ref": "#/components/headers/XApiVersionSupported" },
-              "Deprecation": { "$ref": "#/components/headers/Deprecation" },
-              "Sunset": { "$ref": "#/components/headers/Sunset" },
-              "Link": { "$ref": "#/components/headers/Link" },
-              "X-API-Deprecation-Info": { "$ref": "#/components/headers/XApiDeprecationInfo" }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VaultSummary"
-                }
-              }
-            }
-          },
-          "301": {
-            "description": "Permanent redirect to `/api/v1/vault/summary`",
-            "headers": {
-              "Location": {
-                "schema": { "type": "string", "example": "/api/v1/vault/summary" }
-              },
-              "Deprecation": { "$ref": "#/components/headers/Deprecation" },
-              "Sunset": { "$ref": "#/components/headers/Sunset" },
-              "Link": { "$ref": "#/components/headers/Link" },
-              "X-API-Deprecation-Info": { "$ref": "#/components/headers/XApiDeprecationInfo" }
-            }
-          },
-          "406": {
-            "$ref": "#/components/responses/406VersionNotAcceptable"
+            "description": "Audit logs"
           }
         }
       }
     }
-  },
-  "tags": []
+  }
 }

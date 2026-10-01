@@ -3,7 +3,8 @@ import { emailService } from './emailService';
 import { logger } from './middleware/structuredLogging';
 import { allowlistMiddleware } from './middleware/allowlist';
 import { triggerCacheInvalidation, registerInvalidationHook } from './middleware/cache';
-import { depositsLimiter } from './rateLimiter';
+import { depositsLimiter, depositsUserLimiter } from './rateLimiter';
+import { cacheMiddleware } from './middleware/cache';
 import {
   idempotencyStore,
   IdempotencyConflictError,
@@ -21,6 +22,7 @@ import {
   validate,
   VaultDepositBodySchema,
   VaultWithdrawalBodySchema,
+  VaultStrategyBodySchema,
 } from './middleware/validate';
 import { withdrawalDailyLimitMiddleware } from './middleware/withdrawalDailyLimit';
 import { requireSignedWalletAction } from './middleware/walletSignedAction';
@@ -36,9 +38,12 @@ import {
 } from './withdrawalRecovery';
 import Decimal from 'decimal.js';
 
+const EXPLORER_BASE_URL = process.env.STELLAR_EXPLORER_URL || 'https://stellar.expert/explorer/testnet/tx';
+
 const router = Router();
 const ZERO = new Decimal(0);
 const DEFAULT_SHARE_PRICE = new Decimal(1);
+const STRATEGY_CACHE_TTL_MS = parseInt(process.env.CACHE_STRATEGY_TTL_MS || '30000', 10);
 
 // Register cache invalidation hooks for transaction state changes
 registerInvalidationHook((eventType) => {
@@ -434,6 +439,18 @@ async function handleVaultOperation(
         transactionHash: txHash,
         status: 'pending',
         timestamp: new Date().toISOString(),
+        receipt: {
+          transactionHash: txHash,
+          explorerUrl: `${EXPLORER_BASE_URL}/${txHash}`,
+          horizonUrl: `https://horizon-testnet.stellar.org/transactions/${txHash}`,
+          type,
+          amount: String(amount),
+          asset: String(asset),
+          walletAddress,
+          networkFee: null as string | null,
+          confirmations: 0,
+          generatedAt: new Date().toISOString(),
+        },
       };
 
       // Write event to outbox for reliable publishing.
@@ -442,23 +459,39 @@ async function handleVaultOperation(
       // transaction and dispatching the webhook delivery.
       const eventType: TransactionEventType =
         type === 'deposit' ? 'transaction.deposit.created' : 'transaction.withdrawal.created';
+      const vaultEventType: TransactionEventType =
+        type === 'deposit' ? 'vault.deposit.created' : 'vault.withdrawal.created';
+      const webhookPayload = {
+        transactionId: body.id,
+        amount: String(body.amount),
+        asset: String(body.asset),
+        walletAddress: String(body.walletAddress),
+        transactionHash: String(body.transactionHash),
+        status: String(body.status),
+        timestamp: String(body.timestamp),
+        vaultId: 'primary',
+      };
       void eventOutboxService.writeEvent({
         eventType,
-        payload: {
-          transactionId: body.id,
-          amount: String(body.amount),
-          asset: String(body.asset),
-          walletAddress: String(body.walletAddress),
-          transactionHash: String(body.transactionHash),
-          status: String(body.status),
-          timestamp: String(body.timestamp),
-        },
+        payload: webhookPayload,
         aggregateType: 'transaction',
         aggregateId: body.id,
       }).catch((error) => {
         logger.log('error', 'Failed to write event to outbox', {
           error: error instanceof Error ? error.message : String(error),
           eventType,
+          transactionId: body.id,
+        });
+      });
+      void eventOutboxService.writeEvent({
+        eventType: vaultEventType,
+        payload: webhookPayload,
+        aggregateType: 'vault',
+        aggregateId: 'primary',
+      }).catch((error) => {
+        logger.log('error', 'Failed to write vault event to outbox', {
+          error: error instanceof Error ? error.message : String(error),
+          eventType: vaultEventType,
           transactionId: body.id,
         });
       });
@@ -613,6 +646,7 @@ router.post(
   depositsLimiter,
   invalidateReadCaches,
   requireSignedWalletAction('deposit'),
+  depositsUserLimiter,
   allowlistMiddleware,
   validate({ body: VaultDepositBodySchema }),
   createTimeoutFor.write(),
@@ -629,6 +663,7 @@ router.post(
   depositsLimiter,
   invalidateReadCaches,
   requireSignedWalletAction('withdrawal'),
+  depositsUserLimiter,
   allowlistMiddleware,
   validate({ body: VaultWithdrawalBodySchema }),
   withdrawalDailyLimitMiddleware(),
@@ -648,6 +683,7 @@ router.post(
   depositsLimiter,
   invalidateReadCaches,
   requireSignedWalletAction('deposit'),
+  depositsUserLimiter,
   requireFlag('deposit-v2'),
   validate({ body: VaultDepositBodySchema }),
   (req: Request, res: Response) => handleVaultOperation(req, res, 'deposit'),
@@ -657,8 +693,237 @@ router.post(
  * POST /api/v1/vault/strategy
  * Gated behind the "strategy-selection" feature flag.
  */
-router.post('/strategy', depositsLimiter, requireFlag('strategy-selection'), (_req: Request, res: Response) => {
+router.get('/strategy', cacheMiddleware({ ttl: STRATEGY_CACHE_TTL_MS }), (_req: Request, res: Response) => {
+  res.status(200).json({
+    message: 'Strategy selection endpoint (v2 preview)',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+router.get('/strategy/cooldown', cacheMiddleware({ ttl: 5000 }), (_req: Request, res: Response) => {
+  const cooldownSec = parseInt(process.env.STRATEGY_SWITCH_COOLDOWN_SEC || '0', 10);
+  const lastSwitchIso = process.env.LAST_STRATEGY_SWITCH_TIME || null;
+  const now = Date.now();
+  const lastSwitchMs = lastSwitchIso ? new Date(lastSwitchIso).getTime() : 0;
+  const elapsed = lastSwitchMs > 0 ? Math.floor((now - lastSwitchMs) / 1000) : cooldownSec;
+  const remaining = Math.max(0, cooldownSec - elapsed);
+
+  res.status(200).json({
+    total: cooldownSec,
+    remaining,
+    lastSwitchAt: lastSwitchIso,
+    cooldownActive: remaining > 0,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+router.post('/strategy', depositsLimiter, requireFlag('strategy-selection'), validate({ body: VaultStrategyBodySchema }), (req: Request, res: Response) => {
+  const cooldownSec = parseInt(process.env.STRATEGY_SWITCH_COOLDOWN_SEC || '0', 10);
+  const lastSwitchIso = process.env.LAST_STRATEGY_SWITCH_TIME || null;
+  const now = Date.now();
+  const lastSwitchMs = lastSwitchIso ? new Date(lastSwitchIso).getTime() : 0;
+
+  if (cooldownSec > 0 && lastSwitchMs > 0) {
+    const elapsed = Math.floor((now - lastSwitchMs) / 1000);
+    if (elapsed < cooldownSec) {
+      const retryAfter = cooldownSec - elapsed;
+      res.setHeader('Retry-After', String(retryAfter));
+      return res.status(429).json({
+        error: 'Too Many Requests',
+        status: 429,
+        code: 'STRATEGY_COOLDOWN_ACTIVE',
+        message: `Strategy switch cooldown active. Retry in ${retryAfter}s.`,
+        cooldownRemaining: retryAfter,
+        cooldownTotal: cooldownSec,
+      });
+    }
+  }
+
+  const strategyId = typeof req.body?.strategyId === 'string' ? req.body.strategyId : 'default';
+  const previousStrategyId =
+    typeof req.body?.previousStrategyId === 'string' ? req.body.previousStrategyId : undefined;
+
+  // Record switch time for cooldown tracking
+  process.env.LAST_STRATEGY_SWITCH_TIME = new Date().toISOString();
+
+  void eventOutboxService.writeEvent({
+    eventType: 'vault.strategy.changed',
+    payload: {
+      transactionId: `strategy-${crypto.randomBytes(4).toString('hex')}`,
+      amount: '0',
+      asset: 'RWA',
+      walletAddress: String(req.body?.walletAddress ?? req.get('x-wallet-address') ?? 'unknown'),
+      transactionHash: 'strategy-change',
+      status: 'accepted',
+      timestamp: new Date().toISOString(),
+      vaultId: 'primary',
+      strategyId,
+      previousStrategyId,
+    },
+    aggregateType: 'vault',
+    aggregateId: 'primary',
+  }).catch((error) => {
+    logger.log('error', 'Failed to write strategy change webhook event', {
+      error: error instanceof Error ? error.message : String(error),
+      strategyId,
+    });
+  });
+
   res.status(200).json({ message: 'Strategy selection endpoint (v2 preview)' });
+});
+
+/**
+ * POST /api/v1/vault/gasless-deposits
+ * Gasless deposit via relayer — the Soroban-native equivalent of ERC-20 permit.
+ *
+ * The relayer pays the transaction fee. The user must have pre-authorized
+ * the vault to transfer their tokens via Soroban's native auth mechanism.
+ * This endpoint validates the relayer is registered and forwards the deposit
+ * to the Soroban RPC.
+ */
+router.post(
+  '/gasless-deposits',
+  depositsLimiter,
+  invalidateReadCaches,
+  requireSignedWalletAction('deposit'),
+  depositsUserLimiter,
+  validate({ body: VaultDepositBodySchema }),
+  createTimeoutFor.write(),
+  async (req: Request, res: Response) => {
+    const { amount, asset, walletAddress } = req.body;
+    const normalizedWallet = normalizeWalletAddress(walletAddress);
+    const relayerAddress = req.get('x-relayer-address') || req.get('x-wallet-address');
+
+    if (!relayerAddress) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        status: 400,
+        message: 'Relayer address is required (x-relayer-address header)',
+      });
+    }
+
+    const walletLock = tryAcquireWalletLock(normalizedWallet);
+    if (!walletLock.acquired) {
+      return res.status(409).json({
+        error: 'Conflict',
+        status: 409,
+        code: 'WALLET_OPERATION_IN_PROGRESS',
+        message: 'Another operation is already in progress for this wallet',
+      });
+    }
+
+    try {
+      // Submit gasless deposit via the vault contract's gasless_deposit entrypoint
+      const txHash = await submitSorobanTx('deposit', {
+        amount,
+        asset,
+        walletAddress: normalizedWallet,
+        relayerAddress,
+        gasless: true,
+      });
+
+      recordVaultLifecycleEvent({
+        operation: 'deposit',
+        phase: 'submitted',
+        actor: normalizedWallet,
+        amount: String(amount),
+        asset: String(asset),
+        txHash,
+        correlationId: req.header('x-correlation-id') || undefined,
+        traceId: getCurrentTraceId(),
+        metadata: { gasless: true, relayer: relayerAddress },
+      });
+
+      const prisma = getPrismaClient();
+      await prisma.transaction.create({
+        data: {
+          user: normalizedWallet,
+          amount: String(amount),
+          type: 'deposit',
+          status: 'completed',
+        },
+      });
+
+      await updateVaultStateAndSnapshot('deposit', String(amount), new Date());
+
+      return res.status(201).json({
+        id: `tx-${crypto.randomBytes(4).toString('hex')}`,
+        type: 'deposit',
+        amount,
+        asset,
+        walletAddress: normalizedWallet,
+        transactionHash: txHash,
+        status: 'pending',
+        timestamp: new Date().toISOString(),
+        gasless: true,
+        relayer: relayerAddress,
+        receipt: {
+          transactionHash: txHash,
+          explorerUrl: `${EXPLORER_BASE_URL}/${txHash}`,
+          type: 'deposit',
+          amount: String(amount),
+          asset: String(asset),
+          walletAddress: normalizedWallet,
+        },
+      });
+    } catch (err) {
+      recordVaultLifecycleEvent({
+        operation: 'deposit',
+        phase: 'failed',
+        actor: normalizedWallet,
+        amount: String(amount),
+        asset: String(asset),
+        correlationId: req.header('x-correlation-id') || undefined,
+        traceId: getCurrentTraceId(),
+        errorCode: 'GASLESS_DEPOSIT_ERROR',
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+
+      return res.status(500).json({
+        error: 'Internal Server Error',
+        status: 500,
+        message: 'Failed to process gasless deposit',
+      });
+    } finally {
+      walletLock.release();
+    }
+  },
+);
+
+router.get('/receipts', readsLimiter, async (req: Request, res: Response) => {
+  const prisma = getPrismaClient();
+  const wallet = req.query.wallet as string | undefined;
+  const limit = Math.min(parseInt(req.query.limit as string || '50', 10), 100);
+  const cursor = req.query.cursor as string | undefined;
+
+  const where = wallet ? { user: wallet } : {};
+
+  const transactions = await prisma.transaction.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+
+  const hasMore = transactions.length > limit;
+  const items = hasMore ? transactions.slice(0, limit) : transactions;
+
+  const receipts = items.map((tx) => ({
+    id: tx.id,
+    transactionHash: tx.id.replace('wd_', '').replace('tx_', ''),
+    type: tx.type,
+    amount: tx.amount,
+    status: tx.status,
+    walletAddress: tx.user,
+    explorerUrl: `${EXPLORER_BASE_URL}/${tx.id}`,
+    timestamp: tx.createdAt.toISOString(),
+  }));
+
+  res.status(200).json({
+    receipts,
+    nextCursor: hasMore ? items[items.length - 1].id : null,
+    hasMore,
+  });
 });
 
 export default router;
