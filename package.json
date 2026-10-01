@@ -20,14 +20,13 @@
   "scripts": {
     "check:pnpm-version": "node scripts/check-pnpm-version.js",
     "prepare": "husky",
-    "test": "vitest run",
+    "test": "pnpm --filter backend test -- --runInBand --coverage && pnpm --filter frontend test --run",
     "lint:staged": "lint-staged",
     "commitlint": "commitlint",
     "dev": "concurrently \"pnpm:dev:backend\" \"pnpm:dev:frontend\"",
     "dev:backend": "bash scripts/wait-for-db.sh && pnpm --filter backend dev",
     "dev:frontend": "pnpm --filter frontend dev",
     "wait-for-db": "bash scripts/wait-for-db.sh",
-    "test": "pnpm --filter backend test -- --runInBand --coverage && pnpm --filter frontend test --run",
     "test:backend": "pnpm --filter backend test -- --runInBand --coverage",
     "test:frontend": "pnpm --filter frontend test --run",
     "test:root": "vitest run",
@@ -60,19 +59,22 @@
     "check:pr-template": "pnpm validate:pr-template && pnpm test:validate-pr-template",
     "validate:renovate": "tsx scripts/validate-renovate-config.ts",
     "test:validate-renovate": "vitest run scripts/validate-renovate-config.test.ts",
-    "audit:pnpm": "pnpm audit --audit-level=high",
-    "check:security-audit": "pnpm validate:renovate && pnpm test:validate-renovate && pnpm audit --audit-level=high"
+    "audit:pnpm": "pnpm audit --prod --audit-level=high",
+    "check:security-audit": "pnpm validate:renovate && pnpm test:validate-renovate && pnpm audit --prod --audit-level=high"
   },
   "pnpm": {
     "overrides": {
-      "lodash": "^4.17.21"
+      "lodash": "^4.17.21",
+      "toml": "^4.2.0"
     }
   },
   "overrides": {
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "toml": "^4.2.0"
   },
   "resolutions": {
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "toml": "^4.2.0"
   },
   "lint-staged": {
     "{frontend,backend}/**/*.{ts,tsx}": "node scripts/lint-staged-runners.js eslint",
