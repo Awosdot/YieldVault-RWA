@@ -122,6 +122,15 @@ const options: swaggerJsdoc.Options = {
             timestamp: { type: 'string', format: 'date-time' },
           },
         },
+        SystemHealthSummary: {
+          type: 'object',
+          properties: {
+            vaultCount: { type: 'integer', example: 3 },
+            activeVaults: { type: 'integer', example: 2 },
+            totalTvlUsd: { type: 'string', format: 'decimal', example: '0.60' },
+            totalUsers: { type: 'integer', example: 10 },
+          },
+        },
         DepositRequest: {
           type: 'object',
           required: ['amount', 'asset', 'walletAddress'],
