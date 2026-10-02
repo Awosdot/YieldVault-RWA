@@ -9,7 +9,7 @@ export const MIGRATION_ADVISORY_LOCK_ID = 727727;
 export const MIGRATION_LOCK_RETRY_DELAY_MS = 5000;
 
 export interface LockClient {
-  connect(): Promise<void>;
+  connect(): Promise<unknown>;
   query(sql: string): Promise<{ rows: Array<Record<string, unknown>> }>;
   end(): Promise<void>;
 }
