@@ -841,6 +841,7 @@
           {
             "name": "cursor",
             "in": "query",
+            "description": "Preferred pagination. Opaque cursor in the form `<timestamp>_<id>` returned as `meta.nextCursor`. Rows are ordered by `timestamp` desc then `id` desc and filtered to `(timestamp, id) < cursor`, so newly inserted transactions do not cause skipped or duplicated rows.",
             "schema": {
               "type": "string"
             }
@@ -848,6 +849,8 @@
           {
             "name": "page",
             "in": "query",
+            "deprecated": true,
+            "description": "Deprecated offset-based pagination (`skip: (page-1)*limit`). Kept for backward compatibility only; may skip or duplicate rows when new transactions are inserted between fetches. Use `cursor` instead.",
             "schema": {
               "type": "integer"
             }
@@ -870,7 +873,9 @@
                   "meta": {
                     "count": 0,
                     "total": 0,
-                    "hasNextPage": false
+                    "hasNextPage": false,
+                    "nextCursor": null,
+                    "prevCursor": null
                   }
                 }
               }
