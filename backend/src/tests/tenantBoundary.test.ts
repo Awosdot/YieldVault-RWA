@@ -26,7 +26,7 @@ function createMockRequest(overrides?: Partial<Request>): Partial<Request> {
       return undefined;
     }) as Request['get'],
     ...overrides,
-  };
+  } as unknown as Partial<Request>;
 }
 
 function createMockResponse(): Partial<Response> {

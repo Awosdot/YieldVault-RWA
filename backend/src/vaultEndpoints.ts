@@ -728,7 +728,7 @@ router.post('/strategy', depositsLimiter, requireFlag('strategy-selection'), val
     if (elapsed < cooldownSec) {
       const retryAfter = cooldownSec - elapsed;
       res.setHeader('Retry-After', String(retryAfter));
-      return res.status(429).json({
+      res.status(429).json({
         error: 'Too Many Requests',
         status: 429,
         code: 'STRATEGY_COOLDOWN_ACTIVE',
@@ -736,6 +736,7 @@ router.post('/strategy', depositsLimiter, requireFlag('strategy-selection'), val
         cooldownRemaining: retryAfter,
         cooldownTotal: cooldownSec,
       });
+      return;
     }
   }
 

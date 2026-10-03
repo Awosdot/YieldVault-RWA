@@ -274,6 +274,7 @@ export function diffSchemaShapes(
 
     for (const key of baselineRequired) {
       if (!(key in baselineProps)) {
+      if (!(key in (baseline.properties ?? {}))) {
         issues.push({ path: at(key), message: 'required field missing from snapshot properties (orphaned reference)' });
       }
       if (!(key in currentProps)) {

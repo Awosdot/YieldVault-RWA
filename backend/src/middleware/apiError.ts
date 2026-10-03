@@ -23,6 +23,8 @@ export interface ApiErrorOptions {
   errors?: unknown[];
   /** Request path, echoed on routing failures so clients can log it directly. */
   path?: string;
+  summary?: string;
+  errors?: unknown;
 }
 
 export function sendApiError(

@@ -21,6 +21,8 @@ import {
   revokeCurrentSession,
   revokeAllSessions,
 } from './auth';
+import vaultListRouter from './routes/vaults';
+import { loginHandler, nonceHandler, refreshHandler, requireAuth, verifyJwt } from './auth';
 import {
   authLimiter,
   authIpLimiter,
@@ -923,6 +925,7 @@ app.use('/api', createVersionDiscoveryRouter());
 // Mount routers under /api/v1
 apiV1.use('/vault', vaultRouter);
 apiV1.use('/vaults', vaultsListRouter);
+apiV1.use('/vaults', vaultListRouter);
 apiV1.use('/wallet-aliases', walletAliasRouter);
 apiV1.use('/referrals', referralRouter);
 apiV1.use('/transactions', transactionRouter);
@@ -934,6 +937,8 @@ registerInvalidationHook(invalidateVaultCaches);
 
 // Backward compatibility for legacy unversioned list routes (/api/*)
 app.use('/api', listRouter);
+app.use('/api/vaults', vaultListRouter);
+app.use('/vaults', vaultListRouter);
 
 // â”€â”€â”€ Auth Routes (Issue #377) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Canonical versioned auth endpoints
@@ -4861,16 +4866,18 @@ if (process.env.NODE_ENV !== 'test') {
       error: err instanceof Error ? err.message : String(err),
     });
   });
-  eventOutboxService.start();
+  const shutdownController = new AbortController();
+  const shutdownSignal = shutdownController.signal;
+  eventOutboxService.start({ signal: shutdownSignal });
 
-  // Register graceful shutdown for the outbox processor so pending events
-  // are not abandoned when the process receives a termination signal.
-  process.on('SIGTERM', () => {
-    eventOutboxService.stop();
-  });
-  process.on('SIGINT', () => {
-    eventOutboxService.stop();
-  });
+  // Register graceful shutdown for the outbox processor: abort in-flight work
+  // and wait for the poller to drain before the process tears down resources.
+  const stopOutbox = () => {
+    shutdownController.abort();
+    void eventOutboxService.stop();
+  };
+  process.on('SIGTERM', stopOutbox);
+  process.on('SIGINT', stopOutbox);
 }
 
 
