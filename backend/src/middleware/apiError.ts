@@ -10,6 +10,19 @@ export interface ApiErrorOptions {
   retryable?: boolean;
   retryAfterSeconds?: number | null;
   error?: string;
+  /**
+   * Short, stable headline for the failure. Part of the published error
+   * contract (see `ErrorEnvelope` in openapi.json) alongside `message`.
+   */
+  summary?: string;
+  /**
+   * Field-level failures, surfaced at the top level for clients that read
+   * `errors` directly. `details` carries the same payload for the generic
+   * envelope.
+   */
+  errors?: unknown[];
+  /** Request path, echoed on routing failures so clients can log it directly. */
+  path?: string;
   summary?: string;
   errors?: unknown;
 }
@@ -34,6 +47,7 @@ export function sendApiError(
     retryable: options.retryable ?? options.status >= 500,
     ...(options.summary !== undefined ? { summary: options.summary } : {}),
     ...(options.errors !== undefined ? { errors: options.errors } : {}),
+    ...(options.path !== undefined ? { path: options.path } : {}),
     ...(options.details !== undefined ? { details: options.details } : {}),
     ...(correlationId ? { correlationId } : {}),
     ...(traceId ? { traceId } : {}),

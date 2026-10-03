@@ -77,6 +77,12 @@ export interface PaginationConfig {
   defaultLimit: number;
   /** Maximum allowed items per page. */
   maxLimit: number;
+  /**
+   * Highest page number a caller may request (Issue #1430). The effective
+   * offset handed to the database is `(page - 1) * limit`, so an unbounded
+   * page number turns into an unbounded `skip` scan.
+   */
+  maxPage: number;
   /** Whether to include total count in response. */
   includeTotal: boolean;
   /** Default sort field. */
@@ -90,6 +96,7 @@ export interface PaginationConfig {
 export const DEFAULT_PAGINATION_CONFIG: PaginationConfig = {
   defaultLimit: 20,
   maxLimit: 100,
+  maxPage: 1000,
   includeTotal: true,
   defaultSortOrder: 'desc',
 };
@@ -126,11 +133,11 @@ export function parsePaginationQuery(
     query.cursor = req.query.cursor;
   }
 
-  // Parse page (1-based)
+  // Parse page (1-based, clamped to 1..maxPage — Issue #1430)
   if (req.query.page !== undefined) {
     const page = parseInt(req.query.page as string, 10);
     if (!isNaN(page) && page > 0) {
-      query.page = page;
+      query.page = Math.min(page, mergedConfig.maxPage);
     } else {
       query.page = 1;
     }
