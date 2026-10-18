@@ -186,6 +186,7 @@ enum DataKey {
     Limits,
     DefaultProvider,
     TransferNonceFor(Address, u32),
+    MinTransfer,
     PendingRemoval(u32),
 }
 
@@ -202,6 +203,8 @@ const STELLAR_CHAIN_ID: u32 = 0;
 const BPS_DENOMINATOR: i128 = 10_000;
 const STORAGE_TTL_THRESHOLD: u32 = 10_000;
 const STORAGE_TTL_EXTENSION: u32 = 100_000;
+/// Default minimum transfer amount when none is configured.
+const DEFAULT_MIN_TRANSFER: i128 = 1;
 /// Delay between queueing and executing a provider removal.
 pub const PROVIDER_REMOVAL_DELAY: u64 = 86_400;
 
@@ -447,6 +450,27 @@ impl BridgeCompat {
         Ok(())
     }
 
+    /// Set the minimum amount accepted by `transfer_out` / `estimate_transfer`.
+    /// Admin-only; must be positive.
+    pub fn set_min_transfer(env: Env, min_transfer: i128) -> Result<(), BridgeError> {
+        Self::require_admin(&env)?;
+        if min_transfer <= 0 {
+            return Err(BridgeError::InvalidAmount);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::MinTransfer, &min_transfer);
+        Ok(())
+    }
+
+    /// Returns the minimum transfer amount.
+    pub fn min_transfer(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::MinTransfer)
+            .unwrap_or(DEFAULT_MIN_TRANSFER)
+    }
+
     /// Returns the current transfer limits.
     pub fn transfer_limits(env: Env) -> TransferLimits {
         env.storage()
@@ -479,9 +503,7 @@ impl BridgeCompat {
         if !provider.supported_chains.contains(&dest_chain) {
             return Err(BridgeError::ProviderNotFound);
         }
-        if amount <= 0 || amount > provider.max_transfer {
-            return Err(BridgeError::InvalidAmount);
-        }
+        Self::check_amount_bounds(&env, &provider, amount)?;
 
         let fee_amount = amount
             .checked_mul(provider.fee_bps)
@@ -528,9 +550,7 @@ impl BridgeCompat {
         if !provider.supported_chains.contains(&dest_chain) {
             return Err(BridgeError::ProviderNotFound);
         }
-        if amount <= 0 {
-            return Err(BridgeError::InvalidAmount);
-        }
+        Self::check_amount_bounds(&env, &provider, amount)?;
 
         // Check per-transfer limit
         let limits: TransferLimits =
@@ -549,10 +569,10 @@ impl BridgeCompat {
         // Check epoch volume
         Self::check_epoch_volume(&env, amount, &limits)?;
 
-        // Check token balance
+        // Check the sender can fund the transfer
         let token_addr: Address = env.storage().instance().get(&DataKey::TokenAsset).unwrap();
         let token_client = soroban_sdk::token::Client::new(&env, &token_addr);
-        let balance = token_client.balance(&env.current_contract_address());
+        let balance = token_client.balance(&sender);
         if balance < amount {
             return Err(BridgeError::InsufficientBalance);
         }
@@ -740,6 +760,19 @@ impl BridgeCompat {
             .ok_or(BridgeError::Unauthorized)?;
         admin.require_auth();
         Ok(admin)
+    }
+
+    /// Enforces `min_transfer <= amount <= provider.max_transfer`.
+    fn check_amount_bounds(
+        env: &Env,
+        provider: &BridgeProvider,
+        amount: i128,
+    ) -> Result<(), BridgeError> {
+        let min_transfer = Self::min_transfer(env.clone());
+        if amount < min_transfer || amount > provider.max_transfer {
+            return Err(BridgeError::InvalidAmount);
+        }
+        Ok(())
     }
 
     fn get_provider(env: &Env, provider_id: u32) -> Result<BridgeProvider, BridgeError> {
@@ -1303,6 +1336,15 @@ mod tests {
         assert_eq!(client.transfer(&tx_id).unwrap().provider_id, provider_id);
     }
 
+    // ── Issue #1528: sender balance + amount bounds in transfer_out ─────────
+
+    fn provider_with_max(client: &BridgeCompatClient, env: &Env, max_transfer: i128) -> u32 {
+        client.register_provider(
+            &String::from_str(env, "p"),
+            &BridgeProviderKind::Custom,
+            &Address::generate(env),
+            &0,
+            &max_transfer,
     // ── Provider removal / fallback routing / endpoint invocation ───────────
 
     fn register(client: &BridgeCompatClient, env: &Env, endpoint: &Address) -> u32 {
@@ -1317,6 +1359,77 @@ mod tests {
     }
 
     #[test]
+    fn test_transfer_out_rejects_amount_above_provider_max() {
+        let (env, client, _admin, token_addr, _id) = setup_with_token();
+        let pid = provider_with_max(&client, &env, 1_000);
+        let sender = Address::generate(&env);
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_addr).mint(&sender, &10_000);
+
+        let res = client.try_transfer_out(&sender, &Bytes::new(&env), &1_001, &1, &Some(pid));
+        assert_eq!(res, Err(Ok(BridgeError::InvalidAmount)));
+        assert_eq!(
+            client.try_estimate_transfer(&1_001, &1, &Some(pid)),
+            Err(Ok(BridgeError::InvalidAmount))
+        );
+
+        // Exactly max_transfer is accepted.
+        client.transfer_out(&sender, &Bytes::new(&env), &1_000, &1, &Some(pid));
+    }
+
+    #[test]
+    fn test_transfer_out_rejects_amount_below_min_transfer() {
+        let (env, client, _admin, token_addr, _id) = setup_with_token();
+        let pid = provider_with_max(&client, &env, 1_000);
+        let sender = Address::generate(&env);
+        soroban_sdk::token::StellarAssetClient::new(&env, &token_addr).mint(&sender, &10_000);
+
+        assert_eq!(client.min_transfer(), 1);
+        assert_eq!(
+            client.try_transfer_out(&sender, &Bytes::new(&env), &0, &1, &Some(pid)),
+            Err(Ok(BridgeError::InvalidAmount))
+        );
+
+        client.set_min_transfer(&100);
+        assert_eq!(
+            client.try_transfer_out(&sender, &Bytes::new(&env), &99, &1, &Some(pid)),
+            Err(Ok(BridgeError::InvalidAmount))
+        );
+        assert_eq!(
+            client.try_estimate_transfer(&99, &1, &Some(pid)),
+            Err(Ok(BridgeError::InvalidAmount))
+        );
+        client.transfer_out(&sender, &Bytes::new(&env), &100, &1, &Some(pid));
+
+        assert_eq!(
+            client.try_set_min_transfer(&0),
+            Err(Ok(BridgeError::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn test_transfer_out_checks_sender_balance_not_contract_balance() {
+        let (env, client, _admin, token_addr, contract_id) = setup_with_token();
+        let pid = provider_with_max(&client, &env, 1_000_000);
+        let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+        let token = soroban_sdk::token::Client::new(&env, &token_addr);
+        let sender = Address::generate(&env);
+        token_admin.mint(&sender, &500);
+        // Contract liquidity must not let an underfunded sender pass the check.
+        token_admin.mint(&contract_id, &1_000_000);
+
+        let res = client.try_transfer_out(&sender, &Bytes::new(&env), &501, &1, &Some(pid));
+        assert_eq!(res, Err(Ok(BridgeError::InsufficientBalance)));
+        assert_eq!(token.balance(&sender), 500);
+
+        // A funded sender succeeds even when the contract holds nothing.
+        let (env2, client2, _admin2, token_addr2, contract_id2) = setup_with_token();
+        let pid2 = provider_with_max(&client2, &env2, 1_000_000);
+        let sender2 = Address::generate(&env2);
+        soroban_sdk::token::StellarAssetClient::new(&env2, &token_addr2).mint(&sender2, &500);
+        client2.transfer_out(&sender2, &Bytes::new(&env2), &500, &1, &Some(pid2));
+        let token2 = soroban_sdk::token::Client::new(&env2, &token_addr2);
+        assert_eq!(token2.balance(&sender2), 0);
+        assert_eq!(token2.balance(&contract_id2), 500);
     fn test_transfer_out_invokes_provider_endpoint() {
         let (env, client, _admin, token_addr, contract_id) = setup_with_token();
         let endpoint = mock_endpoint(&env, false);
